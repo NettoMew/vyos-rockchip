@@ -1,0 +1,25 @@
+From: M28K board support
+Subject: [PATCH] mmc: pwrseq_simple: only use reset controller when "resets" present
+
+Mainline pwrseq_simple takes the reset-controller path whenever a single
+reset-gpios entry is present, calling devm_reset_control_get_optional_shared().
+On RK3528 boards (e.g. Widora MangoPi M28K) whose mmc-pwrseq node describes the
+Wi-Fi enable purely as a GPIO (reset-gpios = wifi_reg_on) and has no "resets"
+property, that call returns -EPROBE_DEFER permanently ("reset control not
+ready"), so the SDIO host (sdio0) never probes and the on-board AIC8800 Wi-Fi/BT
+is never powered on.
+
+Only take the reset-controller path when the node actually has a "resets"
+property; otherwise fall back to GPIO reset as before.
+
+--- a/drivers/mmc/core/pwrseq_simple.c
++++ b/drivers/mmc/core/pwrseq_simple.c
+@@ -135,7 +135,7 @@ static int mmc_pwrseq_simple_probe(struct platform_device *pdev)
+ 		return dev_err_probe(dev, PTR_ERR(pwrseq->ext_clk), "external clock not ready\n");
+
+ 	ngpio = of_count_phandle_with_args(dev->of_node, "reset-gpios", "#gpio-cells");
+-	if (ngpio == 1) {
++	if (ngpio == 1 && of_property_present(dev->of_node, "resets")) {
+ 		pwrseq->reset_ctrl = devm_reset_control_get_optional_shared(dev, NULL);
+ 		if (IS_ERR(pwrseq->reset_ctrl))
+ 			return dev_err_probe(dev, PTR_ERR(pwrseq->reset_ctrl),

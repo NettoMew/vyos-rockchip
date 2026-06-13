@@ -1,0 +1,8 @@
+# 10-rockchip-wan.link — 固定 PCIe r8169(WAN) MAC（m28k 的 r8169 无 EEPROM MAC，
+# 否则每启随机 → WAN DHCP lease 漂移）。gmac(LAN) MAC 由 DTS 141 固定。
+# 注：ISO 家族共享，e20c 的 r8169 也会被设此 MAC；多板同时部署需板级化（后续）。
+[Match]
+Driver=r8169
+[Link]
+NamePolicy=keep kernel database onboard slot path
+MACAddress=02:00:28:6b:00:02

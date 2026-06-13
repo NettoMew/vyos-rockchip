@@ -1,0 +1,14 @@
+[Unit]
+Description=SSD1306 OLED dashboard (MangoPi M28K)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+# 等 ssd130x 的 /dev/fb0 就绪（i2c 探测可能略晚），最多 15s
+ExecStartPre=/bin/sh -c 'i=0; while [ ! -e /dev/fb0 ] && [ $i -lt 30 ]; do sleep 0.5; i=$((i+1)); done; [ -e /dev/fb0 ]'
+ExecStart=/usr/bin/oled-dash
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,16 @@
+#!/bin/sh
+# 96-rockchip-depmod.chroot — 给注入的 out-of-tree 模块跑 depmod。
+#
+# stage_aic8800 把 aic8800 的 .ko 投放进 includes.chroot 的
+# /lib/modules/<krel>/updates/aic8800/。live-build 装内核包时的 depmod 早于
+# includes 注入，所以这些模块不在 modules.dep 里，modprobe（modules-load.d
+# 触发）会找不到。这里对带 updates/ 的内核树重跑 depmod 收编它们 + 解析
+# cfg80211 等依赖。无 updates/ 的镜像（未启用 WiFi 的板）此 hook 是 no-op。
+set -e
+for kd in /lib/modules/*/; do
+    krel=$(basename "${kd}")
+    if [ -d "${kd}/updates" ]; then
+        echo "I: depmod ${krel}（收编 out-of-tree 模块）"
+        depmod "${krel}"
+    fi
+done

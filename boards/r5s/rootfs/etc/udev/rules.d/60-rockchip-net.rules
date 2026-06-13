@@ -1,0 +1,17 @@
+# 60-rockchip-net.rules（R5S 覆盖版）— NanoPi R5S 三网口按 SoC 平台路径钉名，
+# 喂 VyOS vyos_net_name（65-vyos-net.rules 读 VYOS_IFNAME 走 predefined 路径）。
+# image 阶段从 boards/r5s/rootfs/ 注入，覆盖 base 里的 RK3528 通用规则（R5S 不用按
+# driver 的 gmac/r8169 行，全走路径，driver 无关，不受 r8169↔r8125 影响）。
+#
+# 地址来自实机枚举（2026-06-14）：
+#   gmac0   = fe2a0000.ethernet  1G RGMII，壳子标 WAN          → eth0
+#   RTL8125 = fe260000.pcie       2.5G（pcie2x1, combphy）       → eth1
+#   RTL8125 = fe270000.pcie       2.5G（pcie3x1）                → eth2
+# 注：pcie3x2(fe280000) 实机未接（Phy link never came up），故不在此列。
+# 物理 LAN-1/LAN-2 ↔ fe260000/fe270000 顺序若与壳子标号相反，对调下面两行的地址即可。
+ACTION!="add",                GOTO="rk_net_end"
+SUBSYSTEM!="net",             GOTO="rk_net_end"
+KERNELS=="fe2a0000.ethernet", ENV{VYOS_IFNAME}="eth0"
+KERNELS=="fe260000.pcie",     ENV{VYOS_IFNAME}="eth1"
+KERNELS=="fe270000.pcie",     ENV{VYOS_IFNAME}="eth2"
+LABEL="rk_net_end"

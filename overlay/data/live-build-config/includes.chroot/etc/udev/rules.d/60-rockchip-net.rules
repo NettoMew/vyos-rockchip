@@ -1,0 +1,12 @@
+# 60-rockchip-net.rules — 按网卡 driver 钉死 RK3528 路由口命名，喂给 VyOS 的
+# vyos_net_name（65-vyos-net.rules 读 VYOS_IFNAME 走 predefined 路径）。
+# 解决 eth0/eth1 随 probe 顺序漂移的问题：gmac=LAN=eth1、pcie(r8169)=WAN=eth0，
+# 不依赖 MAC / probe 顺序，对 e20c/m28k 同样适用（两板都 gmac + pcie r8169）。
+ACTION!="add",            GOTO="rk_net_end"
+SUBSYSTEM!="net",         GOTO="rk_net_end"
+DRIVERS=="rk_gmac-dwmac", ENV{VYOS_IFNAME}="eth1"
+DRIVERS=="r8169",         ENV{VYOS_IFNAME}="eth0"
+# 注：RK3568/R5S 三网口走按 PCIe 平台路径的命名，板级规则在 boards/r5s/rootfs/ 下
+# （image 阶段注入覆盖本文件），不在共享规则里——R5S 的 gmac0 角色(=WAN=eth0)与
+# RK3528(gmac=LAN=eth1) 相反，不能共用按 driver 的行。
+LABEL="rk_net_end"

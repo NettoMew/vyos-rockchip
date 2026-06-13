@@ -1,0 +1,17 @@
+arm64: dts: rockchip: m28k: fix gmac1 MAC address
+
+RK3528 has no fused MAC and the m28k gmac DTS provides none, so the kernel
+assigns a random locally-administered MAC each boot -> DHCP IP keeps moving.
+Pin a stable locally-administered MAC. Single-board value; change per unit
+or switch to nvmem/cpuid derivation if deploying multiple boards.
+
+--- a/arch/arm64/boot/dts/rockchip/rk3528-mangopi-m28.dtsi	2026-06-13 11:44:42.880113481 +0800
++++ b/arch/arm64/boot/dts/rockchip/rk3528-mangopi-m28.dtsi	2026-06-13 11:44:42.881985204 +0800
+@@ -152,6 +152,7 @@
+ 
+ &gmac1 {
+ 	clock_in_out = "output";
++	local-mac-address = [02 00 28 6b 00 01];
+ 	phy-handle = <&rgmii_phy>;
+ 	phy-mode = "rgmii-id";
+ 	phy-supply = <&vcc_3v3>;

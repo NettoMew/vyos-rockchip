@@ -1,0 +1,19 @@
+arm64: dts: rockchip: widen rk3528 soc ranges for PCIe
+
+The 132 PCIe node puts config reg + IO/MEM windows in the 0xfc000000
+region, but 6.18.34's soc ranges only maps 0xfe000000+0x2000000, so the
+dwc driver fails to translate them ("Missing config reg space", ranges
+resolve to 0xffffffff). Mainline widened soc ranges to 0xfc000000+0x44000000
+when rk3528 PCIe landed; mirror that. Must come after 132.
+
+--- a/arch/arm64/boot/dts/rockchip/rk3528.dtsi	2026-06-13 11:44:42.869070772 +0800
++++ b/arch/arm64/boot/dts/rockchip/rk3528.dtsi	2026-06-13 11:44:42.871049208 +0800
+@@ -278,7 +278,7 @@
+ 
+ 	soc {
+ 		compatible = "simple-bus";
+-		ranges = <0x0 0xfe000000 0x0 0xfe000000 0x0 0x2000000>;
++		ranges = <0x0 0xfc000000 0x0 0xfc000000 0x0 0x44000000>;
+ 		#address-cells = <2>;
+ 		#size-cells = <2>;
+ 

@@ -1,0 +1,27 @@
+From: VyOS Rockchip build <le4k@msn.com>
+Subject: [PATCH] r8169: yield RTL8125 PCI IDs to the out-of-tree r8125 driver
+
+NanoPi R5S 的两个 2.5G 口是 RTL8125B，我们用 Realtek 官方 r8125 驱动（out-of-tree，
+性能/特性优于主线 r8169，与 OpenWrt 同款）。但内核内建的 r8169（CONFIG_R8169=y，为
+e20c/m28k 的 RTL8168 而启用）会在 boot 期抢先绑定 RTL8125（同 PCI ID 表），导致后加载
+的 r8125 抢不到设备。
+
+从 r8169 的 PCI ID 表移除 RTL8125 系列 ID（0x8125 与其变体 0x3000），让 r8125 独占绑定，
+无需 driver_override / 解绑重绑这类竞态 hack。仅影响 RTL8125（RK3528 板无此芯片），
+RTL8168/8111(0x8168) 及 RTL8126(0x8126)/8127 等不受影响。
+---
+ drivers/net/ethernet/realtek/r8169_main.c | 2 --
+ 1 file changed, 2 deletions(-)
+
+--- a/drivers/net/ethernet/realtek/r8169_main.c
++++ b/drivers/net/ethernet/realtek/r8169_main.c
+@@ -222,9 +222,7 @@ static const struct pci_device_id rtl8169_pci_tbl[] = {
+ 	{ PCI_VDEVICE(USR,	0x0116) },
+ 	{ PCI_VENDOR_ID_LINKSYS, 0x1032, PCI_ANY_ID, 0x0024 },
+ 	{ 0x0001, 0x8168, PCI_ANY_ID, 0x2410 },
+-	{ PCI_VDEVICE(REALTEK,	0x8125) },
+ 	{ PCI_VDEVICE(REALTEK,	0x8126) },
+ 	{ PCI_VDEVICE(REALTEK,	0x8127) },
+-	{ PCI_VDEVICE(REALTEK,	0x3000) },
+ 	{ PCI_VDEVICE(REALTEK,	0x5000) },
+ 	{ PCI_VDEVICE(REALTEK,	0x0e10) },

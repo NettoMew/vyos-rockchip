@@ -1,0 +1,35 @@
+#!/bin/sh
+# 94-rockchip-grub-devicetree.chroot — 让 grub menuentry 条件加载板级 DTB。
+#
+# 背景：VyOS arm64 走 U-Boot EFI，grub 默认不加载 devicetree，内核用的是
+# U-Boot 的控制 DTB。若板载 eMMC/SPI 残留了旧 U-Boot（如 m28k 出厂 eMMC 里的
+# rc3），其控制 DTB 可能 PCIe disabled / soc ranges 过窄 → 第二网口起不来。
+#
+# 修法：给 vyos-1x 的 grub menuentry 模板插一段条件——存在 /boot/<version>/dtb
+# 就 `devicetree` 加载它（image.sh 对 BOARD_DTB_OVERRIDE=1 的板放这个文件）。
+# 改的是模板本身，所以 VyOS 运行时（"Update GRUB" 服务）重新生成 menuentry 也
+# 带上，不会像手动改 grub.cfg.d 那样被抹掉。没有该文件的镜像（x86 / 未开 override
+# 的板）grub 跳过，无副作用。
+set -e
+
+TMPL=/usr/share/vyos/templates/grub/grub_vyos_version.j2
+[ -f "${TMPL}" ] || { echo "E: ${TMPL} missing — vyos-1x grub 模板布局变了，更新此 hook" >&2; exit 1; }
+grep -q 'devicetree' "${TMPL}" && { echo "I: grub devicetree 块已存在，跳过"; exit 0; }
+
+python3 - "${TMPL}" <<'PYEOF'
+import sys
+path = sys.argv[1]
+text = open(path).read()
+anchor = '    initrd "/boot/{{ version_name }}/initrd.img"'
+inject = (
+    '    if [ -e "/boot/{{ version_name }}/dtb" ]; then\n'
+    '        devicetree "/boot/{{ version_name }}/dtb"\n'
+    '    fi\n'
+)
+if anchor not in text:
+    sys.exit("E: initrd anchor not found in grub template")
+open(path, 'w').write(text.replace(anchor, inject + anchor, 1))
+PYEOF
+
+grep -q 'devicetree' "${TMPL}" || { echo "E: devicetree 注入失败" >&2; exit 1; }
+echo "I: grub menuentry 条件 devicetree 已注入"

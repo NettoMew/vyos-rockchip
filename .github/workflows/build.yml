@@ -1,0 +1,136 @@
+name: build-image
+
+# 原生 arm64 runner（ubuntu-24.04-arm）构建 VyOS-Rockchip 整盘镜像。
+# 关键：arm64 runner 上 `docker run --platform linux/arm64` 与 chroot 均为原生执行，
+# 不挂 qemu 仿真 —— 这正是相对本地 x86 的提速来源（lb build 不再被仿真拖慢）。
+#
+# 两道 actions/cache：
+#   ① work/src       —— u-boot / rkbin / rtl8125 / aic8800 的克隆（rkbin 体积大，省下载）
+#   ② work/kernel(+) —— 交叉编出的内核树 + deb + 输入指纹。内核片段/补丁未变时，
+#                       kernel 阶段据指纹跳过重编（约省 10–15min），且这棵已编树给
+#                       r8125/aic8800 的 out-of-tree 模块编译用（它们需 Module.symvers）。
+# base ISO 不缓存：每次全新 lb build（VyOS rolling 包集会变，求新鲜与可复现）。
+
+on:
+  workflow_dispatch:
+    inputs:
+      board:
+        description: "板型"
+        type: choice
+        options: [r5s, m28k, e20c]
+        default: r5s
+  push:
+    branches: [main]
+    paths-ignore:
+      - "**.md"
+      - "memory/**"
+
+concurrency:
+  group: build-${{ github.ref }}-${{ github.event.inputs.board || 'r5s' }}
+  cancel-in-progress: true
+
+env:
+  BOARD: ${{ github.event.inputs.board || 'r5s' }}
+  KERNEL_BUILD_MODE: cross   # r8125/aic8800 需要宿主侧内核树（container 模式无）
+  BUILDER_PULL: "1"          # 拉官方 vyos/vyos-build:current 的 arm64 变体（原生）
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04-arm   # ← 原生 arm64，无 qemu
+    timeout-minutes: 120
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # GHA runner 根盘默认空闲偏小（~14GB），本构建峰值约需 25–40GB。
+      - name: Free disk space
+        uses: jlumbroso/free-disk-space@main   # 可按需 pin 到具体 commit
+        with:
+          tool-cache: true
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: true
+          docker-images: false   # 我们要 docker，别清运行时
+          swap-storage: false
+
+      - name: Install host build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            git curl rsync zstd xz-utils tar ca-certificates \
+            parted dosfstools e2fsprogs squashfs-tools kmod util-linux \
+            build-essential bc bison flex libssl-dev libelf-dev swig \
+            gcc-aarch64-linux-gnu \
+            python3 python3-pyelftools \
+            debhelper dpkg-dev fakeroot
+          # 交叉工具链兜底：若该平台未提供 aarch64-linux-gnu-* 前缀，软链到原生工具
+          if ! command -v aarch64-linux-gnu-gcc >/dev/null; then
+            for t in gcc ld objcopy objdump nm ar strip; do
+              src=$(command -v "$t") && sudo ln -sf "$src" "/usr/local/bin/aarch64-linux-gnu-$t"
+            done
+          fi
+
+      # ── 缓存①：源码克隆（按 build.conf 的 ref；rkbin 大，主要省下载/clone）─────
+      - name: Cache sources (work/src)
+        uses: actions/cache@v4
+        with:
+          path: work/src
+          key: src-${{ runner.arch }}-${{ hashFiles('build.conf') }}
+          restore-keys: |
+            src-${{ runner.arch }}-
+
+      # ── 缓存②：内核树 + deb + 输入指纹（片段/补丁未变即命中→跳过重编）──────────
+      # work/kernel 含交叉编树（Module.symvers/signing_key，供 r8125）与产出的 deb；
+      # kernel-inputs.sha256 是 build.sh 的内核输入指纹，命中后 kernel 阶段据此跳过。
+      - name: Cache kernel tree + deb
+        uses: actions/cache@v4
+        with:
+          path: |
+            work/kernel
+            work/state/kernel-inputs.sha256
+          key: kernel-${{ runner.arch }}-${{ hashFiles('overlay/scripts/package-build/linux-kernel/config/**', 'overlay/scripts/package-build/linux-kernel/patches/kernel/**', 'boards/*/overlay/scripts/package-build/linux-kernel/patches/kernel/**') }}
+
+      # 阶段拆两段，中间把缓存里的内核 deb 摆回 packages/ 让 kernel 阶段能据指纹跳过。
+      # （work/vyos-build 由 sources 阶段 git clone，故 deb 不能预先放进它的 packages/，
+      #   否则 clone 会因目录非空失败 —— 所以等 clone 完再拷。跳过 deps：其 qemu-binfmt
+      #   检查在原生 arm64 会误报 fatal。）
+      - name: Sources + overlay + builder
+        run: scripts/build.sh "$BOARD" --stages sources,overlay,builder
+
+      - name: Restore cached kernel deb into packages/
+        run: |
+          shopt -s nullglob
+          debs=(work/kernel/linux-image-*-vyos_*_arm64.deb)
+          if (( ${#debs[@]} )); then
+            mkdir -p work/vyos-build/packages
+            cp -v "${debs[@]}" work/vyos-build/packages/
+            echo "命中内核缓存 → deb 已就位，kernel 阶段将跳过重编"
+          else
+            echo "无内核缓存，kernel 阶段将交叉编译"
+          fi
+
+      - name: Kernel + ISO + board assets + U-Boot + image
+        run: scripts/build.sh "$BOARD" --stages kernel,iso,aic8800,r8125,oled,uboot,image
+
+      - name: Upload image
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: vyos-${{ env.BOARD }}-image
+          path: out/*.img.zst
+          if-no-files-found: error
+          retention-days: 14
+
+      # 失败时把构建日志/部分产物捞出来便于排查
+      - name: Upload logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-logs-${{ env.BOARD }}
+          path: |
+            work/*.log
+            out/
+          if-no-files-found: ignore
+          retention-days: 7

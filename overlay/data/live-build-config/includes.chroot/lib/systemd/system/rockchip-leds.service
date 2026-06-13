@@ -1,0 +1,12 @@
+[Unit]
+Description=Rockchip board LED triggers (status heartbeat + per-port netdev)
+After=network.target
+# 网口命名/出现后再配（netdev trigger 需要按名绑定）
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/rockchip-leds.sh
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

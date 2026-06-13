@@ -1,0 +1,71 @@
+# rockchip.toml — Rockchip RK3528 板（Radxa E20C / MangoPi M28K）构建 flavor。
+# 由 lib/overlay.sh 投放进 work/vyos-build/data/build-flavors/。
+#
+# flavor 在 architectures/arm64.toml 之后合并，故此处的 boot_settings 覆盖
+# 其 console_type = "ttyAMA"（Rockchip 调试串口是 8250 系，ttyS）。
+
+image_format = "iso"
+architecture = "arm64"
+
+# 官方裁剪版 linux-firmware（含 rtl_nic/rtl8168h-2.fw —— E20C 的 PCIe 网卡 PHY
+# 固件，缺了会在 dmesg 报 Unable to load firmware，驱动走内置兜底）。
+# vyos-linux-firmware：含 rtl_nic/rtl8168h-2.fw（E20C PCIe 网卡 PHY 固件）。
+# wifi userspace：hostapd(AP) + wpasupplicant(client) + iw + wireless-regdb，
+# 供 m28k 的 AIC8800（VyOS `set interfaces wireless`）使用；e20c 装了不用，无害。
+packages = ["vyos-linux-firmware", "hostapd", "wpasupplicant", "iw", "wireless-regdb"]
+
+# 开箱默认配置（build-vyos-image 把它写成镜像的 /usr/share/vyos/config.boot.default，
+# 首启复制为 config.boot）。设计：eth0/eth1 都跑 DHCP + 开 SSH，这样上电插网线即可
+# SSH 进，无需先接串口。不写 hw-id → 同一逻辑对任意 RK3528 双口板（e20c/m28k）通用。
+# console 段保留 1500000，须配合 hooks/live/93-rockchip-console-speed.chroot 的白名单。
+# 注意：default_config 是顶层 key，必须在 [boot_settings] table 之前（TOML 规则）。
+default_config = '''
+interfaces {
+    ethernet eth0 {
+        address dhcp
+    }
+    ethernet eth1 {
+        address dhcp
+    }
+    loopback lo {
+    }
+}
+service {
+    ssh {
+    }
+}
+system {
+    config-management {
+        commit-revisions "100"
+    }
+    console {
+        device ttyS0 {
+            speed "1500000"
+        }
+    }
+    host-name "vyos"
+    login {
+        user vyos {
+            authentication {
+                encrypted-password "$6$QxPS.uk6mfo$9QBSo8u1FkH16gMyAVhus6fU3LOzvLR9Z9.82m3tiHFAxTtIkhaZSWssSgzt4v4dGAL8rhVQxTg0oAG9/q11h/"
+                plaintext-password ""
+            }
+        }
+    }
+    syslog {
+        local {
+            facility all {
+                level "info"
+            }
+            facility local7 {
+                level "debug"
+            }
+        }
+    }
+}
+'''
+
+[boot_settings]
+console_type = "ttyS"
+console_num = "0"
+console_speed = "1500000"

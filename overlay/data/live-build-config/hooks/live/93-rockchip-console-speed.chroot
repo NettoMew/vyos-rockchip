@@ -1,0 +1,26 @@
+#!/bin/sh
+# 93-rockchip-console-speed.chroot — 允许串口控制台使用 1500000 波特率。
+#
+# Rockchip 平台（BootROM/TPL/SPL/U-Boot）的调试串口固定 1500000，整条链保持
+# 同一波特率才不用中途切换终端。但 vyos-1x 的 system console speed 白名单只到
+# 115200，导致 config.boot.default 里烘进来的 speed "1500000" 在首次 commit 的
+# system_console 校验上失败 → 启动时 "Configuration error"、接口名卡在 e2/e3。
+# 此 hook 在 ISO 构建的 chroot 阶段把 1500000 加进编译产物 node.def 的
+# allowed 列表与校验正则（agetty 本身支持任意波特率，conf_mode 不再二次校验）。
+set -e
+
+NODE_DEF=/opt/vyatta/share/vyatta-cfg/templates/system/console/device/node.tag/speed/node.def
+
+if [ ! -f "${NODE_DEF}" ]; then
+    echo "E: ${NODE_DEF} missing — vyos-1x layout changed, update this hook" >&2
+    exit 1
+fi
+
+sed -i \
+    -e 's/57600 115200"/57600 115200 1500000"/' \
+    -e 's/|115200)/|115200|1500000)/' \
+    -e '/115200 bps (default)/a val_help: 1500000; 1500000 bps (Rockchip UART)' \
+    "${NODE_DEF}"
+
+grep -q '1500000' "${NODE_DEF}" || { echo "E: console speed patch did not apply" >&2; exit 1; }
+echo "I: console speed 1500000 allowed (Rockchip serial)"
