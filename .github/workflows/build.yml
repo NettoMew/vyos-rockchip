@@ -94,8 +94,28 @@ jobs:
       # （work/vyos-build 由 sources 阶段 git clone，故 deb 不能预先放进它的 packages/，
       #   否则 clone 会因目录非空失败 —— 所以等 clone 完再拷。跳过 deps：其 qemu-binfmt
       #   检查在原生 arm64 会误报 fatal。）
+      # ── 缓存③：本地构建的 arm64 builder 容器镜像 ───────────────────────────────
+      # 官方 vyos/vyos-build:current 单架构(amd64)，arm64 上 BUILDER_PULL=0 走本地构建，
+      # 每次约几分钟。docker save|zstd 进 cache，命中即 load，stage_builder 见镜像在就跳过。
+      - name: Cache vyos-build arm64 container image
+        id: builder-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/vyos-builder
+          key: builder-${{ runner.arch }}-v1   # vyos-build Dockerfile 变了就 bump v1→v2 刷新
+
+      - name: Load cached builder image
+        if: steps.builder-cache.outputs.cache-hit == 'true'
+        run: zstd -dc ~/.cache/vyos-builder/img.tar.zst | docker load
+
       - name: Sources + overlay + builder
         run: scripts/build.sh "$BOARD" --stages sources,overlay,builder
+
+      - name: Save builder image to cache (on miss)
+        if: steps.builder-cache.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p ~/.cache/vyos-builder
+          docker save vyos-rockchip/builder:rolling | zstd -T0 -19 > ~/.cache/vyos-builder/img.tar.zst
 
       - name: Restore cached kernel deb into packages/
         run: |
