@@ -1,0 +1,11 @@
+[Unit]
+Description=R5S deterministic NIC naming (eth0=WAN gmac0, eth1/eth2=RTL8125)
+DefaultDependencies=no
+After=systemd-udev-settle.service local-fs.target
+Before=vyos-router.service network-pre.target
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/rockchip-r5s-ifrename.sh
+[Install]
+WantedBy=multi-user.target

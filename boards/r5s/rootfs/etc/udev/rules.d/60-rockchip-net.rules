@@ -1,17 +1,21 @@
-# 60-rockchip-net.rules（R5S 覆盖版）— NanoPi R5S 三网口按 SoC 平台路径钉名，
-# 喂 VyOS vyos_net_name（65-vyos-net.rules 读 VYOS_IFNAME 走 predefined 路径）。
-# image 阶段从 boards/r5s/rootfs/ 注入，覆盖 base 里的 RK3528 通用规则（R5S 不用按
-# driver 的 gmac/r8169 行，全走路径，driver 无关，不受 r8169↔r8125 影响）。
+# 60-rockchip-net.rules（R5S 覆盖版）— NanoPi R5S 三网口命名，喂 VyOS vyos_net_name
+# （65-vyos-net.rules 读 VYOS_IFNAME 走 predefined 路径）。image 阶段从 boards/r5s/rootfs/
+# 注入覆盖 base 的 RK3528 通用规则。保持三板不变式：eth0=WAN、eth1/eth2=LAN。
 #
-# 地址来自实机枚举（2026-06-14）：
-#   gmac0   = fe2a0000.ethernet  1G RGMII，壳子标 WAN          → eth0
-#   RTL8125 = fe260000.pcie       2.5G（pcie2x1, combphy）       → eth1
-#   RTL8125 = fe270000.pcie       2.5G（pcie3x1）                → eth2
-# 注：pcie3x2(fe280000) 实机未接（Phy link never came up），故不在此列。
-# 物理 LAN-1/LAN-2 ↔ fe260000/fe270000 顺序若与壳子标号相反，对调下面两行的地址即可。
-ACTION!="add",                GOTO="rk_net_end"
-SUBSYSTEM!="net",             GOTO="rk_net_end"
-KERNELS=="fe2a0000.ethernet", ENV{VYOS_IFNAME}="eth0"
-KERNELS=="fe260000.pcie",     ENV{VYOS_IFNAME}="eth1"
-KERNELS=="fe270000.pcie",     ENV{VYOS_IFNAME}="eth2"
+# 真机实测确定（2026-06-14，udevadm 验证 VYOS_IFNAME 命中）：
+# - gmac0 用 DRIVERS=="rk_gmac-dwmac"（与 RK3528 同款、已验证可行）。
+#   注意：曾用 KERNELS=="fe2a0000.ethernet" 不命中（gmac 在 initramfs 早起，rootfs 里
+#   按 KERNELS 匹配平台父设备这条没生效）；改 DRIVERS 后 e2→VYOS_IFNAME=eth0 命中。
+# - 两个 RTL8125 用 PCIe 控制器的**内核设备名**匹配。关键坑：内核设备名是按 64 位 CPU
+#   地址命名的 `3c0000000.pcie` / `3c0400000.pcie`，**不是** DT 节点名 fe260000/fe270000！
+#   （fe2xxxxx 只是 DTS 里的 node unit-address；platform device 实际叫 3c0xxxxxx.pcie）
+#     3c0000000.pcie = pcie@fe260000 (pcie2x1, PCI 0000:01:00.0) → eth1
+#     3c0400000.pcie = pcie@fe270000 (pcie3x1, PCI 0001:11:00.0) → eth2
+#   （pcie@fe280000=3c0800000.pcie=pcie3x2 实机未接，Phy link never came up）
+# 物理 LAN-1/LAN-2 ↔ eth1/eth2 顺序若与壳子标号相反，对调下面两行的 3c0000000/3c0400000。
+ACTION!="add",              GOTO="rk_net_end"
+SUBSYSTEM!="net",           GOTO="rk_net_end"
+DRIVERS=="rk_gmac-dwmac",   ENV{VYOS_IFNAME}="eth0"
+KERNELS=="3c0000000.pcie",  ENV{VYOS_IFNAME}="eth1"
+KERNELS=="3c0400000.pcie",  ENV{VYOS_IFNAME}="eth2"
 LABEL="rk_net_end"
