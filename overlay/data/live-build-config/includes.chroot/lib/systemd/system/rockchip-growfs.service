@@ -1,0 +1,14 @@
+[Unit]
+Description=Grow VyOS persistence partition to fill the disk (first boot, idempotent)
+DefaultDependencies=no
+After=systemd-remount-fs.service local-fs.target
+Before=vyos-router.service
+ConditionPathIsMountPoint=/usr/lib/live/mount/persistence
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/rockchip-growfs.sh
+
+[Install]
+WantedBy=multi-user.target

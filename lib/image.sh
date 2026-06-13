@@ -145,6 +145,18 @@ stage_image() {
   log "hostname → vyos（/etc/hostname）"
   echo vyos | sudo tee "${ROOTFS_DIR}/etc/hostname" >/dev/null
 
+  # --- 首启自动扩容服务 ---------------------------------------------------------
+  # 镜像定长(~4G),烧到更大卡/eMMC 后尾部空着。这是 base 服务(overlay includes.chroot,
+  # 随 base ISO 重建也会带),此处在 image 阶段一并注入,免 base ISO 重建即生效。三板通用。
+  local gfs="${OVERLAY_DIR}/data/live-build-config/includes.chroot"
+  if [[ -f "${gfs}/usr/local/sbin/rockchip-growfs.sh" ]]; then
+    log "注入首启自动扩容服务 rockchip-growfs"
+    run sudo install -Dm755 "${gfs}/usr/local/sbin/rockchip-growfs.sh" "${ROOTFS_DIR}/usr/local/sbin/rockchip-growfs.sh"
+    run sudo install -Dm644 "${gfs}/lib/systemd/system/rockchip-growfs.service" "${ROOTFS_DIR}/lib/systemd/system/rockchip-growfs.service"
+    run sudo mkdir -p "${ROOTFS_DIR}/etc/systemd/system/multi-user.target.wants"
+    run sudo ln -sf ../rockchip-growfs.service "${ROOTFS_DIR}/etc/systemd/system/multi-user.target.wants/rockchip-growfs.service"
+  fi
+
   log "mksquashfs → ${vdir}/${version}.squashfs（comp xz, block 262144）"
   run sudo mksquashfs "${ROOTFS_DIR}" "${vdir}/${version}.squashfs" \
     -comp xz -b 262144 -noappend -no-progress
