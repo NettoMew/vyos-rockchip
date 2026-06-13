@@ -1,21 +1,14 @@
-# 60-rockchip-net.rules（R5S 覆盖版）— NanoPi R5S 三网口命名，喂 VyOS vyos_net_name
-# （65-vyos-net.rules 读 VYOS_IFNAME 走 predefined 路径）。image 阶段从 boards/r5s/rootfs/
-# 注入覆盖 base 的 RK3528 通用规则。保持三板不变式：eth0=WAN、eth1/eth2=LAN。
+# 60-rockchip-net.rules（R5S 覆盖版 · 空操作）
 #
-# 真机实测确定（2026-06-14，udevadm 验证 VYOS_IFNAME 命中）：
-# - gmac0 用 DRIVERS=="rk_gmac-dwmac"（与 RK3528 同款、已验证可行）。
-#   注意：曾用 KERNELS=="fe2a0000.ethernet" 不命中（gmac 在 initramfs 早起，rootfs 里
-#   按 KERNELS 匹配平台父设备这条没生效）；改 DRIVERS 后 e2→VYOS_IFNAME=eth0 命中。
-# - 两个 RTL8125 用 PCIe 控制器的**内核设备名**匹配。关键坑：内核设备名是按 64 位 CPU
-#   地址命名的 `3c0000000.pcie` / `3c0400000.pcie`，**不是** DT 节点名 fe260000/fe270000！
-#   （fe2xxxxx 只是 DTS 里的 node unit-address；platform device 实际叫 3c0xxxxxx.pcie）
-#     3c0000000.pcie = pcie@fe260000 (pcie2x1, PCI 0000:01:00.0) → eth1
-#     3c0400000.pcie = pcie@fe270000 (pcie3x1, PCI 0001:11:00.0) → eth2
-#   （pcie@fe280000=3c0800000.pcie=pcie3x2 实机未接，Phy link never came up）
-# 物理 LAN-1/LAN-2 ↔ eth1/eth2 顺序若与壳子标号相反，对调下面两行的 3c0000000/3c0400000。
-ACTION!="add",              GOTO="rk_net_end"
-SUBSYSTEM!="net",           GOTO="rk_net_end"
-DRIVERS=="rk_gmac-dwmac",   ENV{VYOS_IFNAME}="eth0"
-KERNELS=="3c0000000.pcie",  ENV{VYOS_IFNAME}="eth1"
-KERNELS=="3c0400000.pcie",  ENV{VYOS_IFNAME}="eth2"
+# R5S 的网口命名由 rockchip-r5s-ifrename.service 在 vyos-router 之前、按 driver + PCIe
+# 控制器路径确定性完成（eth0=gmac0 WAN、eth1/eth2=两个 RTL8125），不走 VyOS 的 udev
+# 预定义命名（VYOS_IFNAME）。
+#
+# 本文件存在的唯一目的：以同名覆盖 base 里的 RK3528 通用规则（rk_gmac-dwmac→eth1 /
+# r8169→eth0），不让它作用到 R5S。否则 base 会给 R5S 的 gmac 设 VYOS_IFNAME=eth1,
+# vyos_net_name 随即把“预定义名”写进 /run/udev/vyos/,导致 vyos-interface-rescan 把那串
+# 名字当 MAC 解析、抛 netaddr AddrFormatError（启动日志里的 traceback;不致命但难看）。
+# 故这里只留空规则,什么都不设。
+ACTION!="add",    GOTO="rk_net_end"
+SUBSYSTEM!="net", GOTO="rk_net_end"
 LABEL="rk_net_end"
