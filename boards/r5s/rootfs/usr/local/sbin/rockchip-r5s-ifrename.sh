@@ -44,7 +44,7 @@ for n in /sys/class/net/*; do
   esac
   [ -n "$t" ] && [ "$name" != "$t" ] && map="$map $name:$t"
 done
-[ -n "$map" ] || { echo "rockchip-r5s-ifrename: 无需改名"; exit 0; }
+[ -n "$map" ] || echo "rockchip-r5s-ifrename: 无需改名（名字已就位）"
 
 # 先全部 down + 改临时名，避免目标名占用冲突；再从临时名落到目标名
 for pair in $map; do
@@ -57,4 +57,11 @@ for pair in $map; do
   ip link set "t_$c" name "$t" 2>/dev/null && echo "rockchip-r5s-ifrename: rename $c -> $t" \
     || echo "rockchip-r5s-ifrename: FAILED $c -> $t"
 done
+
+# 命名已定。VYOS_IFNAME 的 predefined 路径会让 vyos_net_name 把“名字”写进
+# /run/udev/vyos/,vyos-interface-rescan 随后会误把它当 MAC 解析、抛 AddrFormatError
+# traceback（不致命但难看）。等改名触发的 udev 事件处理完,清空该暂存目录 → rescan
+# 读不到名字 → 不再 traceback。我们三口 MAC 随机、本就不靠 hw-id 持久化,清它无副作用。
+command -v udevadm >/dev/null 2>&1 && udevadm settle 2>/dev/null || true
+rm -f /run/udev/vyos/* 2>/dev/null || true
 exit 0

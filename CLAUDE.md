@@ -15,12 +15,17 @@ VyOS（rolling）→ Rockchip 板整盘镜像构建器：RK3528（e20c / m28k）
 | **m28k** | RK3528 | gmac=eth1(LAN) · PCIe RTL8111=eth0(WAN) · AIC8800 Wi-Fi6 · OLED | PCIe 靠 DTB override + 132/133;wlan0 up(AP 真机未配测);OLED 打成 deb 默认 disabled;gmac(141)/pcie(.link) MAC 已固定 |
 | **r5s** | RK3568 | gmac0=eth0(WAN,1G) · 2×RTL8125=eth1/eth2(LAN,2.5G) | rk809 PMIC + PCIe3 PHY(=y) + r8125(out-of-tree,签名);命名靠 `rockchip-r5s-ifrename.service`;串口 ttyS2;三口默认 DHCP;Configuration success |
 
-- **命名口径**：三板统一 **eth0=WAN、eth1(+eth2)=LAN**。e20c/m28k 走 udev `VYOS_IFNAME`（按 driver）;
-  **r5s 改走确定性改名服务**——VyOS 的 udev 预定义命名在 r5s 启动期竞态失效（gmac 真实 add 在
-  initramfs、r8125 晚加载),且其会把预定义名写进 `/run/udev/vyos/` 触发 `vyos-interface-rescan`
-  的 `AddrFormatError` traceback（不致命）;故 r5s 的 `boards/r5s/rootfs/.../60-rockchip-net.rules`
-  是**空操作**（只盖住 base、不设 VYOS_IFNAME）,命名全交给 `rockchip-r5s-ifrename.service`
-  （按 driver+PCIe 路径 `ip link` 改名,见其内注释）。
+- **命名口径**：三板统一 **eth0=WAN、eth1(+eth2)=LAN**。e20c/m28k 走 udev `VYOS_IFNAME`（按 driver）。
+  **r5s 两者并用**（缺一不可,真机踩出来的）：
+  ① `boards/r5s/rootfs/.../60-rockchip-net.rules` 设 `VYOS_IFNAME`（gmac0 用 DRIVERS、两个 RTL8125 用
+     PCIe 控制器内核名 `3c0000000.pcie`/`3c0400000.pcie`,**非** DT 节点名 fe26/fe27）——它走
+     65-vyos-net 的 predefined 路径,**防止 vyos_net_name 把 r8125 口改回临时名 e3/e4**（否则
+     eth1/eth2 不存在 → Configuration error）；
+  ② `rockchip-r5s-ifrename.service`（按 driver+PCIe 路径 `ip link` 改名）兜底确定性命名（VYOS_IFNAME
+     在启动期对 gmac 不总命中）。
+  predefined 路径的副作用是 vyos_net_name 把“名字”写进 `/run/udev/vyos/`,令 `vyos-interface-rescan`
+  抛 `AddrFormatError` traceback（不致命）；**改名服务在改名后 `udevadm settle` + 清空 `/run/udev/vyos/`**
+  消除它（我们三口 MAC 随机、本不靠 hw-id 持久化,清它无副作用）。
 - **MAC**：r5s 的 gmac0 与两个 RTL8125 均无 efuse、每启随机 → WAN DHCP 每启换租约;需要再做固定。
 
 ## 入口 & 跑法

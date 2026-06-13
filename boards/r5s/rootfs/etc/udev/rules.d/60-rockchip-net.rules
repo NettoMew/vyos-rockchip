@@ -1,14 +1,26 @@
-# 60-rockchip-net.rules（R5S 覆盖版 · 空操作）
+# 60-rockchip-net.rules（R5S 覆盖版）— NanoPi R5S 三网口命名,喂 VyOS vyos_net_name
+# （VYOS_IFNAME predefined 路径）。image 阶段从 boards/r5s/rootfs/ 注入覆盖 base 的
+# RK3528 通用规则。三板统一不变式：eth0=WAN、eth1/eth2=LAN。
 #
-# R5S 的网口命名由 rockchip-r5s-ifrename.service 在 vyos-router 之前、按 driver + PCIe
-# 控制器路径确定性完成（eth0=gmac0 WAN、eth1/eth2=两个 RTL8125），不走 VyOS 的 udev
-# 预定义命名（VYOS_IFNAME）。
+# 为什么仍需要这条 VYOS_IFNAME 规则（而不能只靠 rockchip-r5s-ifrename.service）：
+# r8125 是 out-of-tree 模块、晚加载,其 udev add 事件 + 改名服务自身 ip-link 改名触发的
+# 事件都会再跑 65-vyos-net；若此处不给预定义名,vyos_net_name 会把 r8125 口改回临时名
+# （e3/e4）,把改名服务刚设好的 eth1/eth2 顶掉 → 默认配置里的 eth1/eth2 找不到 →
+# Configuration error。设了 VYOS_IFNAME,65-vyos-net 走 predefined 路径、保住名字。
 #
-# 本文件存在的唯一目的：以同名覆盖 base 里的 RK3528 通用规则（rk_gmac-dwmac→eth1 /
-# r8169→eth0），不让它作用到 R5S。否则 base 会给 R5S 的 gmac 设 VYOS_IFNAME=eth1,
-# vyos_net_name 随即把“预定义名”写进 /run/udev/vyos/,导致 vyos-interface-rescan 把那串
-# 名字当 MAC 解析、抛 netaddr AddrFormatError（启动日志里的 traceback;不致命但难看）。
-# 故这里只留空规则,什么都不设。
-ACTION!="add",    GOTO="rk_net_end"
-SUBSYSTEM!="net", GOTO="rk_net_end"
+# 命名要害（真机实测）：
+# - gmac0 用 DRIVERS=="rk_gmac-dwmac"（KERNELS==fe2a0000.ethernet 在启动期不命中）。
+# - 两个 RTL8125 用 PCIe 控制器**内核设备名**（按 CPU 地址,非 DT 节点名 fe260000/fe270000）：
+#     3c0000000.pcie = pcie@fe260000 (pcie2x1, PCI 0000:01:00.0) → eth1
+#     3c0400000.pcie = pcie@fe270000 (pcie3x1, PCI 0001:11:00.0) → eth2
+# 物理 LAN-1/LAN-2 ↔ eth1/eth2 若与壳子标号相反,对调下面两行的 3c0000000/3c0400000。
+#
+# 副作用：predefined 路径会让 vyos_net_name 把“名字”写进 /run/udev/vyos/,vyos-interface-rescan
+# 会误把它当 MAC 解析、抛 AddrFormatError traceback（不致命）。该 traceback 由
+# rockchip-r5s-ifrename.service 在改名后清空 /run/udev/vyos/ 消除（见该脚本）。
+ACTION!="add",              GOTO="rk_net_end"
+SUBSYSTEM!="net",           GOTO="rk_net_end"
+DRIVERS=="rk_gmac-dwmac",   ENV{VYOS_IFNAME}="eth0"
+KERNELS=="3c0000000.pcie",  ENV{VYOS_IFNAME}="eth1"
+KERNELS=="3c0400000.pcie",  ENV{VYOS_IFNAME}="eth2"
 LABEL="rk_net_end"
