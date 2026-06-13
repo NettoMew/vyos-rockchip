@@ -12,18 +12,13 @@ name: build-image
 # base ISO 不缓存：每次全新 lb build（VyOS rolling 包集会变，求新鲜与可复现）。
 
 on:
-  workflow_dispatch:
+  workflow_dispatch:        # 只手动触发（避免每次 push 自动跑、吃 runner 时间）
     inputs:
       board:
         description: "板型"
         type: choice
         options: [r5s, m28k, e20c]
         default: r5s
-  push:
-    branches: [main]
-    paths-ignore:
-      - "**.md"
-      - "memory/**"
 
 concurrency:
   group: build-${{ github.ref }}-${{ github.event.inputs.board || 'r5s' }}
@@ -32,7 +27,10 @@ concurrency:
 env:
   BOARD: ${{ github.event.inputs.board || 'r5s' }}
   KERNEL_BUILD_MODE: cross   # r8125/aic8800 需要宿主侧内核树（container 模式无）
-  BUILDER_PULL: "1"          # 拉官方 vyos/vyos-build:current 的 arm64 变体（原生）
+  # 官方 vyos/vyos-build:current 是单架构(amd64)、没有 arm64 变体 → 在 arm64 runner 上
+  # 拉它只会得到 amd64（脚本会判出不对再回退本地构建，白拉一趟）。故直接 0：跳过 pull，
+  # 用 work/vyos-build/docker 的 Dockerfile 在 arm64 上原生构建 builder 容器。
+  BUILDER_PULL: "0"
 
 jobs:
   build:
