@@ -15,10 +15,15 @@ on:
   workflow_dispatch:        # 只手动触发（避免每次 push 自动跑、吃 runner 时间）
     inputs:
       board:
-        description: "板型"
+        description: "设备"
         type: choice
         options: [r5s, m28k, e20c]
         default: r5s
+      kernel_mode:
+        description: "内核构建方式（cross=宿主交叉,快;container=官方容器流程,正常但慢。带 out-of-tree 驱动的 m28k/r5s 只能 cross）"
+        type: choice
+        options: [cross, container]
+        default: cross
 
 concurrency:
   group: build-${{ github.ref }}-${{ github.event.inputs.board || 'r5s' }}
@@ -26,7 +31,10 @@ concurrency:
 
 env:
   BOARD: ${{ github.event.inputs.board || 'r5s' }}
-  KERNEL_BUILD_MODE: cross   # r8125/aic8800 需要宿主侧内核树（container 模式无）
+  # cross（默认）：宿主交叉编译,leaner、快,且产出宿主侧内核树供 r8125/aic8800 编 out-of-tree 模块。
+  # container（正常）：官方 build.py 在 arm64 容器里跑（原生无 qemu,但更重）;无宿主侧内核树,
+  #                    故只适合无 out-of-tree 驱动的板（e20c）。
+  KERNEL_BUILD_MODE: ${{ github.event.inputs.kernel_mode || 'cross' }}
   # 官方 vyos/vyos-build:current 是单架构(amd64)、没有 arm64 变体 → 在 arm64 runner 上
   # 拉它只会得到 amd64（脚本会判出不对再回退本地构建，白拉一趟）。故直接 0：跳过 pull，
   # 用 work/vyos-build/docker 的 Dockerfile 在 arm64 上原生构建 builder 容器。
@@ -40,6 +48,15 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      # container（正常）模式没有宿主侧内核树,带 out-of-tree 驱动的板会在 aic8800/r8125
+      # 阶段失败 → 早退并给清楚提示,省得白跑。
+      - name: Validate kernel mode vs board
+        run: |
+          if [ "$KERNEL_BUILD_MODE" = "container" ] && [ "$BOARD" != "e20c" ]; then
+            echo "::error::container（正常）模式不支持 $BOARD —— 它带 out-of-tree 驱动（m28k=aic8800 / r5s=r8125）,需要宿主侧内核树,请改用 cross。当前只有 e20c 可走 container。"
+            exit 1
+          fi
 
       # GHA runner 根盘默认空闲偏小（~14GB），本构建峰值约需 25–40GB。
       - name: Free disk space
