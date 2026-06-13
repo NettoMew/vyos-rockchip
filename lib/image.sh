@@ -119,16 +119,21 @@ stage_image() {
     run sudo rsync -aK "${BOARDS_DIR}/${BOARD}/rootfs/" "${ROOTFS_DIR}/"
   fi
 
-  # --- 板级 console 设备修正 ----------------------------------------------------
-  # 共享 default_config 写死 console device ttyS0（RK3528 调试口=uart0=ttyS0）。
-  # VyOS 首启 commit 时按 `system console device` 管 getty——设备与实际口不符会把
-  # systemd 自动起的串口 getty 顶掉 → 串口无登录提示。故按本板 BOARD_SERIAL_CONSOLE
-  # 修正（RK3568/R5S 调试口=uart2=ttyS2）。ttyS0 的板无操作。
-  if [[ "${BOARD_SERIAL_CONSOLE}" != "ttyS0" ]]; then
-    local cfgdef="${ROOTFS_DIR}/usr/share/vyos/config.boot.default"
-    if [[ -f "${cfgdef}" ]]; then
+  # --- 板级 default_config 修正（config.boot.default）---------------------------
+  local cfgdef="${ROOTFS_DIR}/usr/share/vyos/config.boot.default"
+  if [[ -f "${cfgdef}" ]]; then
+    # ① console 设备：共享 default_config 写死 ttyS0（RK3528 调试口=uart0）。VyOS 首启
+    #    commit 按 `system console device` 管 getty，设备不符会顶掉 systemd 自动起的
+    #    串口 getty → 无登录提示。按本板修正（RK3568/R5S 调试口=uart2=ttyS2）。
+    if [[ "${BOARD_SERIAL_CONSOLE}" != "ttyS0" ]]; then
       log "console device: ttyS0 → ${BOARD_SERIAL_CONSOLE}（config.boot.default）"
       run sudo sed -i "s/device ttyS0 {/device ${BOARD_SERIAL_CONSOLE} {/" "${cfgdef}"
+    fi
+    # ② 三网口板（R5S，BOARD_R8125=1）：共享 default_config 只配 eth0/eth1，给第三口
+    #    eth2 也补一段 DHCP，三口开箱即连（桥接/LAN 划分留给用户后配）。
+    if [[ "${BOARD_R8125:-0}" == "1" ]] && ! grep -q "ethernet eth2" "${cfgdef}"; then
+      log "default_config: 追加 ethernet eth2 { address dhcp }（三口板）"
+      run sudo sed -i 's|    loopback lo {|    ethernet eth2 {\n        address "dhcp"\n    }\n    loopback lo {|' "${cfgdef}"
     fi
   fi
 
