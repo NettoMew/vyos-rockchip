@@ -195,7 +195,12 @@ RK3582 = RK3588S 残核分级 bin。纯主线：mainline 6.18.34 自带 `rk3582-
     **修法**：`config/70` 补 `CONFIG_SPI=y`（与 SPI_ROCKCHIP 同处，I2C 早有对应核心）。仅
     e52c（唯一 SPI PMIC 板）触发；R5S(rk809)/RK3528 走 I2C，从不碰 SPI，故一直没暴露。
     **教训：移植 SPI PMIC 的板先确认 `CONFIG_SPI` 核心在不在——子驱动 =y 不代表它会被保留。**
-- **r8125**（两口）：`BOARD_R8125=1` 复用 `lib/r8125.sh` + 家族补丁 150，与 R5S 完全同路径。
+  - **USB3 坑（2026-06-14 真机 dmesg）**：`fc000000.usb dwc3: failed to initialize core`
+    —— RK3588/RK3582 的 USB3 用 **USBDP 组合 PHY**（`phy-rockchip-usbdp.c`，≠ RK3568 的 NANENG
+    combo PHY）。e52c.dts 的 `usb_host0_xhci`(host) 引 `&usbdp_phy0`，缺驱动则 dwc3 无 PHY、
+    USB3 口不工作（USB2 走 INNO_USB2 仍可用）。修法在 72 加 `CONFIG_PHY_ROCKCHIP_USBDP=y`；
+    它 `depends on TYPEC`，e52c 虽无 Type-C 硬件仍须连带 `CONFIG_TYPEC=y`（裸子系统核心，不带
+    typec 控制器驱动）—— 与 immortalwrt config-6.18（同款内核）一致。RK3528/3568 无 usbdp，inert。
   **关键解耦**：image.sh 追加 eth2 的门控从 `BOARD_R8125` 改成了 **`BOARD_THIRD_PORT`**——
   E52C 同样 `BOARD_R8125=1` 但只有两口，若按 r8125 插 eth2 会引用不存在的口 → 首启 commit
   失败。R5S 补了 `BOARD_THIRD_PORT=1` 保持三口行为；E52C 不设（共享 default_config 的
