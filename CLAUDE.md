@@ -227,6 +227,13 @@ RK3582 = RK3588S 残核分级 bin。纯主线：mainline 6.18.34 自带 `rk3582-
   `60-rockchip-net.rules` 只设 `DRIVERS=="r8125", ENV{VYOS_IFNAME}="%k"`（保持现名）防
   vyos_net_name 把口改回枚举名 e3/e4（同 R5S 的 clobber 坑），脚本末清 `/run/udev/vyos/`
   消除 AddrFormatError traceback。
+- **LED（真机踩坑，2026-06-14）**：e52c 三个灯 = `green:status`(gpio,heartbeat) +
+  `green:lan`(pwm14) + `green:wan`(pwm11)，后两个是 DTS 的 **pwm-leds**。真机 `/sys/class/leds`
+  起初只有 `green:status`——因 **`CONFIG_LEDS_PWM` 没开**，两个 PWM 灯不注册（PWM_ROCKCHIP 早
+  =y、pwm11/14 DTS status=okay，就缺 leds-pwm 驱动）。修法：70 片段补 `CONFIG_LEDS_PWM=y`
+  （与 immortalwrt 一致）。灯名 `green:wan`/`green:lan` 已加进共享 `rockchip-leds.sh`（绑
+  eth0/eth1 netdev，link+tx+rx）——按名绑、其它板无此灯自动跳过，零板族分支。green:status
+  的 heartbeat 真机实测在跳（class 层 brightness 0/1 振荡），状态灯本身正常。
 - **待真机确认**：① 物理 WAN/LAN 壳子标号 ↔ eth0/eth1（排序反了就对调脚本里 eth0/eth1
   目标名）；② `%k` 守卫是否够（不够则退回 R5S 式按 `*.pcie` 地址钉 VYOS_IFNAME=eth0/eth1，
   地址串先串口 `ls -l /sys/class/net/*/device` 读）；③ 开核后实际核数 + 稳定性；④ 两口

@@ -2,10 +2,10 @@
 # rockchip-leds.sh — 开机配置板载 LED，按"接口角色不变式"驱动，与板族无关：
 #   命名规则（60-rockchip-net.rules）保证三板一致：eth0 = WAN，eth1(+eth2) = LAN。
 # 故按接口名绑灯即可，无 if-board 分支：
-#   状态/心跳灯（green:status / SYS）        → heartbeat
-#   WAN 灯（white:wan / WAN）                → eth0 netdev
-#   LAN 灯（white:lan / LAN-1）              → eth1 netdev
-#   LAN-2 灯（LAN-2）                        → eth2 netdev（R5S 第三口；他板无此灯则跳过）
+#   状态/心跳灯（green:status / SYS）         → heartbeat
+#   WAN 灯（white:wan / WAN / green:wan）      → eth0 netdev（E52C 是 pwm-led green:wan）
+#   LAN 灯（white:lan / LAN-1 / green:lan）    → eth1 netdev（E52C 是 pwm-led green:lan）
+#   LAN-2 灯（LAN-2）                          → eth2 netdev（R5S 第三口；他板无此灯则跳过）
 #   gmac 的 RJ45 内置 PHY 灯（stmmac-0:01:*）→ gmac 物理口（按 driver 认，与 WAN/LAN 角色无关）
 # 不同板灯名不同，缺哪个 LED 名相应步骤静默跳过（setnetdev 见目录不存在即返回），无副作用。
 set -e
@@ -25,8 +25,8 @@ for s in green:status SYS; do
 done
 
 # 按接口名绑网口活动灯（eth0=WAN / eth1,eth2=LAN）——灯名按板族择一存在
-for L in white:wan WAN;   do setnetdev "${L}" eth0 link tx rx; done
-for L in white:lan LAN-1; do setnetdev "${L}" eth1 link tx rx; done
+for L in white:wan WAN green:wan;   do setnetdev "${L}" eth0 link tx rx; done
+for L in white:lan LAN-1 green:lan; do setnetdev "${L}" eth1 link tx rx; done
 setnetdev "LAN-2" eth2 link tx rx
 
 # gmac 的 RJ45 内置 PHY 灯（绿=link，黄=收发）——绑到 gmac 物理口本身（其角色随板不同）
