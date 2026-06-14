@@ -1,0 +1,10 @@
+#!/bin/sh
+# 95-rockchip-net-tune-enable.chroot — 启用网络调优服务（开机自调 IRQ 亲和/RPS/governor）。
+# 用 hook 在 chroot 内建 wants symlink（而非 includes.chroot 放 symlink——那会让
+# build-vyos-image 的 copytree 跟随绝对路径符号链接失败）。同 97-rockchip-leds-enable。
+set -e
+[ -f /lib/systemd/system/rockchip-net-tune.service ] || { echo "E: rockchip-net-tune.service 缺失"; exit 1; }
+mkdir -p /etc/systemd/system/multi-user.target.wants
+ln -sf /lib/systemd/system/rockchip-net-tune.service \
+    /etc/systemd/system/multi-user.target.wants/rockchip-net-tune.service
+echo "I: rockchip-net-tune.service enabled"

@@ -129,9 +129,11 @@ stage_image() {
       log "console device: ttyS0 → ${BOARD_SERIAL_CONSOLE}（config.boot.default）"
       run sudo sed -i "s/device ttyS0 {/device ${BOARD_SERIAL_CONSOLE} {/" "${cfgdef}"
     fi
-    # ② 三网口板（R5S，BOARD_R8125=1）：共享 default_config 只配 eth0/eth1，给第三口
-    #    eth2 也补一段 DHCP，三口开箱即连（桥接/LAN 划分留给用户后配）。
-    if [[ "${BOARD_R8125:-0}" == "1" ]] && ! grep -q "ethernet eth2" "${cfgdef}"; then
+    # ② 三网口板（R5S，BOARD_THIRD_PORT=1）：共享 default_config 只配 eth0/eth1，给第三口
+    #    eth2 也补一段 DHCP，三口开箱即连（桥接/LAN 划分留给用户后配）。门控用 BOARD_THIRD_PORT
+    #    而非 BOARD_R8125——后者只表示“装 r8125 驱动”：E52C 同样 BOARD_R8125=1 但只有两口
+    #    （都是 RTL8125、无 gmac），若按 r8125 插 eth2 会引用不存在的口 → 首启 commit 失败。
+    if [[ "${BOARD_THIRD_PORT:-0}" == "1" ]] && ! grep -q "ethernet eth2" "${cfgdef}"; then
       log "default_config: 追加 ethernet eth2 { address dhcp }（三口板）"
       run sudo sed -i 's|    loopback lo {|    ethernet eth2 {\n        address "dhcp"\n    }\n    loopback lo {|' "${cfgdef}"
     fi

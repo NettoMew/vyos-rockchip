@@ -1,5 +1,5 @@
-# VyOS for Rockchip（RK3528 / RK3568）— 入口快捷方式。真正的逻辑全在 scripts/build.sh。
-BOARDS := e20c m28k r5s
+# VyOS for Rockchip（RK3528 / RK3568 / RK3582）— 入口快捷方式。真正的逻辑全在 scripts/build.sh。
+BOARDS := e20c m28k r5s e52c
 
 .PHONY: all $(BOARDS) $(addsuffix -dry,$(BOARDS)) builder kernel iso clean distclean help
 

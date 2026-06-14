@@ -1,0 +1,22 @@
+# 60-rockchip-net.rules（E52C 覆盖版）— 防 vyos_net_name 把 RTL8125 口改回自动枚举名。
+# image 阶段从 boards/e52c/rootfs/ 注入，覆盖 base 的 RK3528 通用规则。
+#
+# E52C 两口都是 RTL8125（无 gmac），确定性命名由 rockchip-e52c-ifrename.service 按 PCIe
+# 路径排序做（eth0=WAN、eth1=LAN）。本规则只负责**防 clobber**：r8125 晚加载，其 add
+# 事件 + 改名服务自身 ip-link 改名触发的事件都会再跑 65-vyos-net；若不给预定义名，
+# vyos_net_name 会按枚举把 r8125 口改成 e3/e4 之类，把服务设好的 eth0/eth1 顶掉 →
+# 默认配置里的 eth1 找不到 → Configuration error（R5S 真机踩过同款坑）。
+#
+# 这里给 r8125 口设 VYOS_IFNAME="%k"（= 保持其**当前**内核名）→ 走 65-vyos-net 的
+# predefined 路径、不再自动枚举改名 → 服务设好的名字得以保住。无需硬编码 PCIe 地址
+# （两口同驱动、地址真机才知），比 R5S 的按地址钉名更省事、地址无关。
+#
+# 副作用：predefined 路径会让 vyos_net_name 把名字写进 /run/udev/vyos/，vyos-interface-rescan
+# 误当 MAC 解析、抛 AddrFormatError traceback（不致命），由 ifrename 服务改名后清空 /run/udev/vyos/ 消除。
+#
+# 若真机发现仍有 clobber（%k 守卫不够），退路是改回 R5S 式按 PCIe 控制器内核名钉死
+# VYOS_IFNAME=eth0/eth1（先串口 `ls -l /sys/class/net/*/device` 读出两口的 *.pcie 串）。
+ACTION!="add",      GOTO="rk_net_end"
+SUBSYSTEM!="net",   GOTO="rk_net_end"
+DRIVERS=="r8125",   ENV{VYOS_IFNAME}="%k"
+LABEL="rk_net_end"

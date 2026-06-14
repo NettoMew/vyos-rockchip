@@ -1,0 +1,29 @@
+diff --git a/arch/arm/mach-rockchip/rk3588/rk3588.c b/arch/arm/mach-rockchip/rk3588/rk3588.c
+index eedce7b9b08..a69bce2696f 100644
+--- a/arch/arm/mach-rockchip/rk3588/rk3588.c
++++ b/arch/arm/mach-rockchip/rk3588/rk3588.c
+@@ -394,18 +394,24 @@ int ft_system_setup(void *blob, struct bd_info *bd)
+ 	log_debug("ip-state: %02x %02x %02x (otp)\n",
+ 		  ip_state[0], ip_state[1], ip_state[2]);
+ 
++#if 0	/* 开核: keep good big cores even if a sibling core in the cluster is bad */
+ 	/* policy: fail entire big core cluster when one or more core is bad */
+ 	if (ip_state[0] & FAIL_CPU_CLUSTER1)
+ 		ip_state[0] |= FAIL_CPU_CLUSTER1;
+ 	if (ip_state[0] & FAIL_CPU_CLUSTER2)
+ 		ip_state[0] |= FAIL_CPU_CLUSTER2;
++#endif
+ 
++#if 0	/* 开核: do not fail an extra big cluster for market segmentation */
+ 	/* policy: always fail one big core cluster on rk3582 */
+ 	if (!(ip_state[0] & (FAIL_CPU_CLUSTER1 | FAIL_CPU_CLUSTER2)))
+ 		ip_state[0] |= FAIL_CPU_CLUSTER2;
++#endif
+ 
++#if 0	/* 开核: keep the Mali-G610 GPU enabled */
+ 	/* policy: always fail gpu on rk3582 */
+ 	ip_state[1] |= FAIL_GPU;
++#endif
+ 
+ 	/* policy: always fail one rkvdec core on rk3582 */
+ 	if (!(ip_state[1] & (FAIL_RKVDEC0 | FAIL_RKVDEC1)))

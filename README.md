@@ -19,6 +19,7 @@ VyOS 官方提供 arm64 软件源,却不带这些 Rockchip 设备的启动驱动
 | **Radxa E20C** | RK3528 | 双千兆 | 真机验证 |
 | **MangoPi M28K** | RK3528 | 双千兆 · Wi-Fi 6 · OLED | 真机验证 |
 | **NanoPi R5S** | RK3568 | 千兆 WAN + 双 2.5G | 真机验证 |
+| **Radxa E52C** | RK3582 | 双 2.5G | 真机验证（开核 8 核） |
 
 ## 快速开始
 

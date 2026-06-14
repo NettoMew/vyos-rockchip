@@ -17,10 +17,10 @@ on:
       board:
         description: "设备"
         type: choice
-        options: [r5s, m28k, e20c]
+        options: [r5s, m28k, e20c, e52c]
         default: r5s
       kernel_mode:
-        description: "内核构建方式（cross=宿主交叉,快;container=官方容器流程,正常但慢。带 out-of-tree 驱动的 m28k/r5s 只能 cross）"
+        description: "内核构建方式（cross=宿主交叉,快;container=官方容器流程,正常但慢。带 out-of-tree 驱动的 m28k/r5s/e52c 只能 cross）"
         type: choice
         options: [cross, container]
         default: cross

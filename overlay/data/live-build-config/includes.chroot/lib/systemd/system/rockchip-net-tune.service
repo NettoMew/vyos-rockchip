@@ -1,0 +1,15 @@
+[Unit]
+Description=Rockchip board network tuning (NIC IRQ affinity + RPS/RFS/XPS + cpufreq performance)
+# vyos-router 之后跑：那时网口已最终命名（含 r5s/e52c 的改名服务）且已 up，IRQ 已分配、
+# rx/tx 队列已建。After 仅排序、不强制成功依赖；与 vyos-router 同被 multi-user.target 拉起。
+# 不依赖 network-online.target（VyOS 起网走 vyos-router、该 target 未必触发）；网口未就绪
+# 由脚本自身的 30s 轮询兜底（r8125 out-of-tree 晚到 ~27s）。
+After=vyos-router.service network.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/rockchip-net-tune.sh
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

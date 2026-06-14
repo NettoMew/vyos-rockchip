@@ -35,12 +35,28 @@ stage_uboot() {
     || fatal "DDR TPL 缺失（glob: ${RKBIN_TPL_GLOB}）：${RKBIN_SRC}"
   log "rkbin blob：$(basename "${tpl:-?}") + $(basename "${bl31:-?}")"
 
-  # 源码树复位 + 当前板的源注入（保证板间互不渗漏）
+  # 源码树复位 + 当前板的源注入（保证板间互不渗漏）。boots/<b>/uboot/ 是镜像 U-Boot 源
+  # 树结构的“文件覆盖”（m28k 的 DTS/defconfig 走这里），但其下 patches/ 子目录是“补丁库”
+  # 非源覆盖 —— rsync 排除它，避免把补丁文件复制进 U-Boot 树（补丁由下方 git apply 应用）。
   run git -C "${UBOOT_SRC}" checkout -- .
   run git -C "${UBOOT_SRC}" clean -fdq
   if [[ -d "${BOARDS_DIR}/${BOARD}/uboot" ]]; then
-    log "注入板级 U-Boot 源：boards/${BOARD}/uboot/"
-    run rsync -a "${BOARDS_DIR}/${BOARD}/uboot/" "${UBOOT_SRC}/"
+    log "注入板级 U-Boot 源：boards/${BOARD}/uboot/（排除 patches/）"
+    run rsync -a --exclude='patches/' "${BOARDS_DIR}/${BOARD}/uboot/" "${UBOOT_SRC}/"
+  fi
+
+  # RK3582 开核（feature-flag 门控，与 lib/r8125.sh 的 BOARD_R8125 同构）：默认开。
+  # 砍核全发生在 U-Boot ft_system_setup()（读 OTP 后套市场分级策略）；补丁把三段分级
+  # 策略 #if 0 掉，放出 efuse 实测为好的核 + GPU，保留 OTP 对单颗真坏核的屏蔽。真 RK3588S2
+  # 上 cpu-code≠0x3582 → 空操作。boards/<b>/uboot/patches/*.patch 按 ls 序 git apply
+  # （与 vyos-build 内核 patches/*.patch glob 同构；e20c/m28k 无此目录则跳过）。
+  if [[ "${BOARD_UNLOCK_CORES:-0}" == "1" ]]; then
+    local pdir="${BOARDS_DIR}/${BOARD}/uboot/patches" p
+    [[ -d "${pdir}" ]] || fatal "BOARD_UNLOCK_CORES=1 但缺补丁目录：${pdir}"
+    for p in $(ls -v "${pdir}"/*.patch 2>/dev/null); do
+      log "开核：git apply $(basename "${p}")"
+      run git -C "${UBOOT_SRC}" apply "${p}"
+    done
   fi
 
   run make -C "${UBOOT_SRC}" mrproper

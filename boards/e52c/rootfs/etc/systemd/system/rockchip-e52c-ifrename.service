@@ -1,0 +1,11 @@
+[Unit]
+Description=E52C deterministic NIC naming (eth0=WAN, eth1=LAN; both RTL8125 by PCIe path)
+DefaultDependencies=no
+After=systemd-udev-settle.service local-fs.target
+Before=vyos-router.service network-pre.target
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/rockchip-e52c-ifrename.sh
+[Install]
+WantedBy=multi-user.target

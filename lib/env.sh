@@ -62,6 +62,13 @@ if [[ -n "${BOARD:-}" ]]; then
       RKBIN_BL31_GLOB="${RKBIN_BL31_GLOB:-bin/rk35/rk3568_bl31_v*.elf}"
       RKBIN_TPL_GLOB="${RKBIN_TPL_GLOB:-bin/rk35/rk3568_ddr_1056MHz_v*.bin}"
       ;;
+    rk3588)
+      # RK3582（E52C）= RK3588S 残核 bin，boot 等同 rk3588s，用 rk3588 blob。
+      # DDR 选 lp4_2112MHz/lp5_2400MHz（rkbin 同一 blob 覆盖 LPDDR4/4X/5、按板载颗粒
+      # 自适应）；BL31 取版本最新（v1.54）。RKBIN_TPL 可在 board.conf 显式覆盖到其他频点。
+      RKBIN_BL31_GLOB="${RKBIN_BL31_GLOB:-bin/rk35/rk3588_bl31_v*.elf}"
+      RKBIN_TPL_GLOB="${RKBIN_TPL_GLOB:-bin/rk35/rk3588_ddr_lp4_2112MHz_lp5_2400MHz_v*.bin}"
+      ;;
     *) fatal "未知 BOARD_SOC=${BOARD_SOC}（lib/env.sh 的 case 里加一条即可）" ;;
   esac
 fi
