@@ -8,7 +8,7 @@ stage_deps() {
   local c
   for c in git curl docker python3 rsync zstd parted losetup truncate \
            aarch64-linux-gnu-gcc swig bison flex bc make mkfs.ext4 \
-           unsquashfs mksquashfs depmod; do
+           unsquashfs mksquashfs depmod xorriso; do
     command -v "${c}" >/dev/null 2>&1 || missing+=("${c}")
   done
   command -v mkfs.vfat >/dev/null 2>&1 || command -v mkfs.fat >/dev/null 2>&1 || missing+=("mkfs.vfat")
@@ -18,7 +18,7 @@ stage_deps() {
 
   ((${#missing[@]} == 0)) || fatal "缺少依赖：${missing[*]}
   CachyOS/Arch 参考：sudo pacman -S --needed git curl docker python rsync zstd parted \\
-    aarch64-linux-gnu-gcc swig bison flex bc dosfstools e2fsprogs squashfs-tools python-pyelftools qemu-user-static-binfmt"
+    aarch64-linux-gnu-gcc swig bison flex bc dosfstools e2fsprogs squashfs-tools libisoburn python-pyelftools qemu-user-static-binfmt"
 
   # arm64 容器与 squashfs chroot 都依赖 qemu binfmt，且必须带 F（fix-binary）标志，
   # 否则只读 squashfs 里找不到解释器。

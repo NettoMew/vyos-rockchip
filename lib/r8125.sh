@@ -47,8 +47,20 @@ stage_r8125() {
   done
 
   # 2) 交叉编模块（M= 外部模块构建，obj-m := r8125.o；LOCALVERSION 对齐内核 vermagic）
+  #    特性 flag（命令行赋值覆盖 Makefile 内默认；与 immortalwrt 的 r8125 包同版本同取舍）：
+  #      防链路闪断（issue #1，RTL8125+RK35xx 真机栽过）——三个省电特性全编关：
+  #        CONFIG_ASPM=n        PCIe L1 ASPM（编译期去路径，比运行期 aspm=0 更彻底，immortalwrt 同款）
+  #        ENABLE_EEE=n         802.3az EEE（节能以太网，掉线重训元凶）
+  #        ENABLE_GIGA_LITE=n   RTL8125 私有 2.5G EEE-lite（ethtool --show-eee 看不到的隐藏元凶）
+  #      性能——开硬件多队列（net-tune 的 IRQ 亲和/RPS 才有真队列可分核，否则单队列堆一核）：
+  #        ENABLE_RSS_SUPPORT=y       硬件 RSS：多 RX 队列按流哈希分核（上限 RX4/TX2）
+  #        ENABLE_MULTIPLE_TX_QUEUE=y 多 TX 队列，配合 RSS
+  #    其余特性（TX_NO_CLOSE/CONFIG_SOC_LAN）Makefile 默认已 =y，无需重申。
   run make -C "${kdir}" M="${R8125_SRC}" ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- \
-    -j"${JOBS}" LOCALVERSION=-vyos modules
+    -j"${JOBS}" LOCALVERSION=-vyos \
+    CONFIG_ASPM=n ENABLE_EEE=n ENABLE_GIGA_LITE=n \
+    ENABLE_RSS_SUPPORT=y ENABLE_MULTIPLE_TX_QUEUE=y \
+    modules
   local ko="${R8125_SRC}/r8125.ko"
   [[ -f "${ko}" ]] || [[ "${DRY_RUN:-0}" == "1" ]] || fatal "r8125.ko 未编出"
 

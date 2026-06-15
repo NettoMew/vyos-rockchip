@@ -163,6 +163,14 @@ stage_image() {
   run sudo mksquashfs "${ROOTFS_DIR}" "${vdir}/${version}.squashfs" \
     -comp xz -b 262144 -noappend -no-progress
 
+  # 给 imgiso 阶段留一份"注入本板资产后的 squashfs"（换进 base ISO 的 live/ →
+  # 每板 ISO，供 `add system image` 原地升级、保配置、可回滚）。同一份 squashfs 复用，
+  # 不二次 mksquashfs。属主转回当前用户，免后续 host 侧读写要 sudo。
+  run rm -rf "${BOARD_ISO_DIR}"
+  run mkdir -p "${BOARD_ISO_DIR}"
+  run sudo cp "${vdir}/${version}.squashfs" "${BOARD_ISO_DIR}/filesystem.squashfs"
+  run sudo chown "$(id -u):$(id -g)" "${BOARD_ISO_DIR}/filesystem.squashfs"
+
   # --- boot 文件（vmlinuz/initrd）从解包 rootfs 取 -----------------------------
   local f
   for f in "${ROOTFS_DIR}/boot/"*; do
@@ -186,6 +194,12 @@ stage_image() {
       [[ -f "${kdtb}" ]] || continue
       run sudo install -Dm644 "${kdtb}" "${vdir}/dtb"
       log "DTB override 启用：/boot/${version}/dtb ← ${BOARD_KERNEL_DTB}"
+      # 同一份 DTB 也留给 imgiso：每板 ISO 把它放成 live/vmlinuz-dtb，让 VyOS 安装器
+      # 的 vmlinuz*/initrd* 拷贝规则顺带把它带进新版本目录 /boot/<ver>/vmlinuz-dtb，
+      # grub 模板（hook 94）随之 devicetree 它 —— 否则 add system image 不拷 dtb，
+      # DTB override 板（generic U-Boot 控制 DTB 非板专属）升级后外设/网卡起不来。
+      run sudo cp "${kdtb}" "${BOARD_ISO_DIR}/vmlinuz-dtb"
+      run sudo chown "$(id -u):$(id -g)" "${BOARD_ISO_DIR}/vmlinuz-dtb"
       break
     done
   fi

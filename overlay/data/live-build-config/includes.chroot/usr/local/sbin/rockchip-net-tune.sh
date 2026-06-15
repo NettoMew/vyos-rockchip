@@ -1,8 +1,11 @@
 #!/bin/sh
-# rockchip-net-tune.sh — 板无关网络性能调优（开机一次，oneshot）：NIC IRQ 亲和 +
-# RPS/RFS/XPS + cpufreq performance，让 2.5G 不卡在单核 softirq。
+# rockchip-net-tune.sh — 板无关网络性能调优（开机一次，oneshot）：硬件多队列 + NIC
+# offload + IRQ 亲和 + RPS/RFS/XPS + cpufreq performance，让 2.5G 不卡在单核 softirq。
+#   ⓪ 硬件多队列(RSS) + NIC offload：把网卡 RX/TX 通道开到硬件上限（RTL8125 编了
+#      ENABLE_RSS_SUPPORT 后有 RX4/TX2），并开 GRO/GSO/TSO/SG/UDP-GRO-forwarding。
+#      GRO 入向聚合、GSO 出向分段，与 VyOS flowtable 软件流卸载是不同层、叠加关系。
 #   ① NIC IRQ 亲和：每个网口的 IRQ 钉到独立 CPU（big.LITTLE 自动优先大核），多队列网卡
-#      各队列分到不同核（= 补上 RSS）→ 避免所有网卡中断堆在 CPU0、单个 A55 喂不满 2.5G。
+#      各队列分到不同核（RSS 真队列分核）→ 避免所有网卡中断堆在 CPU0、单核喂不满 2.5G。
 #   ② RPS/RFS/XPS：把协议栈收/发处理摊到其余核（gmac 这种单队列口收益最大）。
 #   ③ CPU governor=performance：路由盒吃满频，降转发延迟、提峰值吞吐。
 # 与 rockchip-leds.sh 同 philosophy：按接口名/驱动认，板间零 if 分支；缺项静默跳过 →
@@ -93,12 +96,36 @@ RPS_MASK=$(mask_of $rps_ids)
 [ -w /proc/sys/net/core/rps_sock_flow_entries ] && \
   { echo 32768 > /proc/sys/net/core/rps_sock_flow_entries 2>/dev/null || true; }
 
-# --- 逐网口：IRQ 亲和（轮转分核）+ RPS/RFS/XPS --------------------------------------
+# --- 逐网口：硬件多队列(RSS) + NIC offload + IRQ 亲和 + RPS/RFS/XPS -------------------
 counter=0
 for ndir in /sys/class/net/*; do
   [ -e "$ndir/device" ] || continue          # 只动物理网卡
   ifc=$(basename "$ndir")
   case "$ifc" in eth*|lan*|wan*) ;; *) continue ;; esac
+
+  # ⓪ 硬件多队列(RSS)：把 RX/TX 通道开到硬件上限。必须在 IRQ/队列分核之前——`ethtool -L`
+  #    会重建 IRQ 与 rx/tx 队列，先开通道后面 ① IRQ 亲和、②③ RPS/XPS 才能落到新队列上。
+  #    单队列网卡(不支持/RX≤1)自动跳过；驱动用 combined 还是分离 RX/TX 都兼容。
+  chan=$(ethtool -l "$ifc" 2>/dev/null)
+  if [ -n "$chan" ]; then
+    mco=$(printf '%s\n' "$chan" | awk '/Pre-set/{p=1;next} /Current/{p=0} p&&/^Combined:/{print $2;exit}')
+    mrx=$(printf '%s\n' "$chan" | awk '/Pre-set/{p=1;next} /Current/{p=0} p&&/^RX:/{print $2;exit}')
+    mtx=$(printf '%s\n' "$chan" | awk '/Pre-set/{p=1;next} /Current/{p=0} p&&/^TX:/{print $2;exit}')
+    if [ "${mco:-0}" -gt 1 ] 2>/dev/null; then
+      ethtool -L "$ifc" combined "$mco" 2>/dev/null && log "$ifc RSS combined=$mco" || true
+    else
+      a=""
+      [ "${mrx:-0}" -gt 1 ] 2>/dev/null && a="rx $mrx"
+      [ "${mtx:-0}" -gt 1 ] 2>/dev/null && a="$a tx $mtx"
+      [ -n "$a" ] && { ethtool -L "$ifc" $a 2>/dev/null && log "$ifc RSS channels: $a" || true; }
+    fi
+  fi
+
+  # ⓪b NIC offload：GRO 入向聚合、GSO/TSO 出向分段、SG、UDP 转发 GRO。逐项设，不支持/[fixed]
+  #     的项 `|| true` 静默跳过（一项失败不连累其它）。与 flowtable 软件流卸载叠加，不冲突。
+  for feat in gro gso tso sg rx-udp-gro-forwarding; do
+    ethtool -K "$ifc" "$feat" on 2>/dev/null || true
+  done
 
   # ① IRQ 亲和。优先用 net-tune.conf 的显式 IFACE_CPU 覆盖；否则自动轮转分核。
   forced=""

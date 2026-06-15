@@ -19,9 +19,11 @@ LIB_DIR="${PROJECT_ROOT}/lib"
 source "${LIB_DIR}/log.sh"
 
 # 顺序即依赖：iso 产出"板无关 base"（make iso 即止于此）；aic8800/r8125/oled 在其后
-# 把"本板专属"资产产到 board-assets/（需 kernel 树，cross 模式），由 image 阶段注入。
-ALL_STAGES=(deps sources overlay builder kernel iso aic8800 r8125 oled uboot image)
-BOARD_STAGES=(uboot image)   # 需要板名的阶段（aic8800/r8125/oled 内部按 BOARD_* 判断，无板时自跳过）
+# 把"本板专属"资产产到 board-assets/（需 kernel 树，cross 模式），由 image 阶段注入；
+# image 产整盘 img（dd 全盘刷）+ 留下本板 squashfs；imgiso 据此 remaster 出每板 ISO
+# （供 add system image 原地升级、保配置、可回滚）。
+ALL_STAGES=(deps sources overlay builder kernel iso aic8800 r8125 oled uboot image imgiso)
+BOARD_STAGES=(uboot image imgiso)   # 需要板名的阶段（aic8800/r8125/oled 内部按 BOARD_* 判断，无板时自跳过）
 
 usage() {
   sed -n '2,12p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
@@ -73,7 +75,7 @@ if [[ -n "${BOARD}" ]]; then
   # shellcheck source=/dev/null
   source "${BOARD_CONF}"
 fi
-for m in env deps sources overlay builder kernel iso aic8800 r8125 oled uboot image; do
+for m in env deps sources overlay builder kernel iso aic8800 r8125 oled uboot image imgiso; do
   # shellcheck source=/dev/null
   source "${LIB_DIR}/${m}.sh"
 done
@@ -112,6 +114,7 @@ if [[ "${DRY_RUN}" == "1" ]]; then
     [[ -f "${UBOOT_OUT_DIR}/u-boot-rockchip.bin" ]] \
       && log "uboot:  已缓存 → 跳过" || log "uboot:  待构建"
     stage_image
+    stage_imgiso
   fi
   log "dry-run 结束，未执行任何构建。"
   exit 0

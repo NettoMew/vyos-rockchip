@@ -36,6 +36,8 @@ zstd -dc out/vyos-*-nanopi-r5s.img.zst | sudo dd of=/dev/sdX bs=4M conv=fsync st
 
 开机即用:网口默认 DHCP 并开启 SSH —— 上电插网线就能 `ssh vyos@<分到的地址>`,无需先接串口。默认账户 `vyos / vyos`。
 
+每次构建除整盘镜像外,还会在 `out/` 产出一份每款设备的 `.iso`。已经在跑的设备无需全盘重刷,把它拷到设备后用 VyOS 原生的 `add system image <文件>` 原地升级:多版本共存、保留现有配置与已装软件、可回滚。
+
 ## 工作原理
 
 构建分两段:**家族共享、只算一次**的内核与基础镜像;**每款设备各自一份**的 U-Boot 与专属资产,在本机快速注入。

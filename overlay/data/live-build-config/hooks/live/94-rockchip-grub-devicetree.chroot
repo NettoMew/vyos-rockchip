@@ -5,10 +5,14 @@
 # U-Boot 的控制 DTB。若板载 eMMC/SPI 残留了旧 U-Boot（如 m28k 出厂 eMMC 里的
 # rc3），其控制 DTB 可能 PCIe disabled / soc ranges 过窄 → 第二网口起不来。
 #
-# 修法：给 vyos-1x 的 grub menuentry 模板插一段条件——存在 /boot/<version>/dtb
-# 就 `devicetree` 加载它（image.sh 对 BOARD_DTB_OVERRIDE=1 的板放这个文件）。
+# 修法：给 vyos-1x 的 grub menuentry 模板插一段条件——存在板级 DTB 就 `devicetree`
+# 加载它。认两个文件名：
+#   /boot/<version>/dtb         整盘 img（image.sh 对 BOARD_DTB_OVERRIDE=1 的板放）；
+#   /boot/<version>/vmlinuz-dtb 每板 ISO 经 `add system image` 升级的路径——VyOS 安装器
+#                               只从 ISO live/ 拷 vmlinuz*/initrd*，故 imgiso 把本板 DTB
+#                               放成 live/vmlinuz-dtb 蹭这条规则落到版本目录（见 imgiso.sh）。
 # 改的是模板本身，所以 VyOS 运行时（"Update GRUB" 服务）重新生成 menuentry 也
-# 带上，不会像手动改 grub.cfg.d 那样被抹掉。没有该文件的镜像（x86 / 未开 override
+# 带上，不会像手动改 grub.cfg.d 那样被抹掉。两个文件都没有的镜像（x86 / 未开 override
 # 的板）grub 跳过，无副作用。
 set -e
 
@@ -24,6 +28,8 @@ anchor = '    initrd "/boot/{{ version_name }}/initrd.img"'
 inject = (
     '    if [ -e "/boot/{{ version_name }}/dtb" ]; then\n'
     '        devicetree "/boot/{{ version_name }}/dtb"\n'
+    '    elif [ -e "/boot/{{ version_name }}/vmlinuz-dtb" ]; then\n'
+    '        devicetree "/boot/{{ version_name }}/vmlinuz-dtb"\n'
     '    fi\n'
 )
 if anchor not in text:

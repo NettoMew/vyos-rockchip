@@ -50,6 +50,11 @@ if [[ -n "${BOARD:-}" ]]; then
   # squashfs 后只注入本板这一份 → 每板镜像只带自己的资产，base ISO 保持板无关。
   BOARD_ASSETS_DIR="${WORK_DIR}/board-assets/${BOARD}"
 
+  # 每板 ISO 中转（imgiso 阶段）：image 阶段把"注入本板资产后的 squashfs"（+ DTB
+  # override 板的内核 DTB）落到这里，imgiso 阶段拿它换进 base ISO 的 live/，remaster
+  # 成可被 VyOS `add system image` 原地升级的每板 ISO。
+  BOARD_ISO_DIR="${WORK_DIR}/board-iso/${BOARD}"
+
   # SoC → rkbin blob 选择模式。rkbin master 滚版本时会直接替换旧文件，钉死
   # 文件名必碎；按 glob 取版本号最新的一个（uboot.sh 解析），RKBIN_BL31/RKBIN_TPL
   # 可显式覆盖成 rkbin 内的相对路径。
