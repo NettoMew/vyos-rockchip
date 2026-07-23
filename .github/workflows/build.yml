@@ -147,7 +147,7 @@ jobs:
           fi
 
       - name: Kernel + ISO + board assets + U-Boot + image
-        run: scripts/build.sh "$BOARD" --stages kernel,iso,aic8800,r8125,oled,sources,uboot,image
+        run: scripts/build.sh "$BOARD" --stages kernel,iso,aic8800,r8125,oled,sources,uboot,image,imgiso
 
       - name: Upload image
         if: success()
