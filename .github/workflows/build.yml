@@ -77,7 +77,7 @@ jobs:
             git curl rsync zstd xz-utils tar ca-certificates \
             parted dosfstools e2fsprogs squashfs-tools kmod util-linux \
             build-essential bc bison flex libssl-dev libelf-dev swig \
-            gcc-aarch64-linux-gnu \
+            gcc-aarch64-linux-gnu libgnutls28-dev \
             python3 python3-pyelftools \
             debhelper dpkg-dev fakeroot
           # 交叉工具链兜底：若该平台未提供 aarch64-linux-gnu-* 前缀，软链到原生工具
