@@ -140,12 +140,11 @@ stage_image() {
   fi
 
   # --- 主机名 -------------------------------------------------------------------
-  # live 基础镜像的 /etc/hostname 是 Debian 默认 "debian"；live-config 的 0020-hostname
-  # 只在 /etc/hostname 不存在或为 localhost.localdomain 时才改写,否则沿用 → 运行时 hostname
-  # 卡在 debian,与 VyOS 的 host-name=vyos + /etc/hosts(vyos) 不一致 → sudo/poweroff 报
-  # "unable to resolve host debian"。直接把 /etc/hostname 设成 vyos(三板一致、与官方一致)。
-  log "hostname → vyos（/etc/hostname）"
-  echo vyos | sudo tee "${ROOTFS_DIR}/etc/hostname" >/dev/null
+  # /etc/hostname 由 VyOS 的 system_host-name.py（hostnamectl set-hostname --static）
+  # 管理。若在 squashfs 下层写死，live overlay 中 hostnamectl 写入可能失效。
+  # 故彻底删除下层副本，让 VyOS 在首次 commit 时在持久层创建，后续修改即可正常生效。
+  log "hostname: 删除 squashfs 内的 /etc/hostname（由 VyOS commit 管理）"
+  sudo rm -f "${ROOTFS_DIR}/etc/hostname"
 
   # --- 首启自动扩容服务 ---------------------------------------------------------
   # 镜像定长(~4G),烧到更大卡/eMMC 后尾部空着。这是 base 服务(overlay includes.chroot,

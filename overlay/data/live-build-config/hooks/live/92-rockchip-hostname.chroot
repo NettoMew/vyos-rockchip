@@ -1,0 +1,7 @@
+#!/bin/bash
+# 92-rockchip-hostname.chroot — enable hostname sync service in live system
+set -e
+
+echo "rockchip: enabling hostname sync service"
+
+systemctl enable rockchip-hostname-sync.service

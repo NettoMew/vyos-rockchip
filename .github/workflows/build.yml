@@ -77,8 +77,8 @@ jobs:
             git curl rsync zstd xz-utils tar ca-certificates \
             parted dosfstools e2fsprogs squashfs-tools kmod util-linux \
             build-essential bc bison flex libssl-dev libelf-dev swig \
-            gcc-aarch64-linux-gnu \
-            python3 python3-pyelftools \
+            gcc-aarch64-linux-gnu libgnutls28-dev \
+            python3 python3-pyelftools xorriso \
             debhelper dpkg-dev fakeroot
           # 交叉工具链兜底：若该平台未提供 aarch64-linux-gnu-* 前缀，软链到原生工具
           if ! command -v aarch64-linux-gnu-gcc >/dev/null; then
@@ -147,14 +147,16 @@ jobs:
           fi
 
       - name: Kernel + ISO + board assets + U-Boot + image
-        run: scripts/build.sh "$BOARD" --stages kernel,iso,aic8800,r8125,oled,uboot,image
+        run: scripts/build.sh "$BOARD" --stages kernel,iso,aic8800,r8125,oled,sources,uboot,image,imgiso
 
       - name: Upload image
         if: success()
         uses: actions/upload-artifact@v4
         with:
           name: vyos-${{ env.BOARD }}-image
-          path: out/*.img.zst
+          path: |
+            out/*.img.zst
+            out/*.iso
           if-no-files-found: error
           retention-days: 14
 

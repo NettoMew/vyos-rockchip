@@ -1,0 +1,13 @@
+[Unit]
+Description=Sync /etc/hostname from VyOS host-name config
+# 必须在 VyOS 首次 commit 生成 /etc/hosts 之后运行
+After=vyos-router.service
+Before=getty.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=no
+ExecStart=/usr/local/sbin/rockchip-hostname-sync.sh
+
+[Install]
+WantedBy=multi-user.target
