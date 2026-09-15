@@ -89,7 +89,7 @@ stage_image() {
   # --- C2：解包 base squashfs → 注入本板资产 → depmod → 重打包 ------------------
   run sudo rm -rf "${ROOTFS_DIR}"
   log "unsquashfs base filesystem.squashfs → ${ROOTFS_DIR}"
-  run sudo unsquashfs -d "${ROOTFS_DIR}" "${MNT_DIR}/iso/live/filesystem.squashfs"
+  run sudo unsquashfs -processors "${JOBS}" -d "${ROOTFS_DIR}" "${MNT_DIR}/iso/live/filesystem.squashfs"
 
   if [[ -d "${BOARD_ASSETS_DIR}" ]]; then
     log "注入板级资产：${BOARD_ASSETS_DIR} → rootfs"
@@ -160,7 +160,7 @@ stage_image() {
 
   log "mksquashfs → ${vdir}/${version}.squashfs（comp xz, block 262144）"
   run sudo mksquashfs "${ROOTFS_DIR}" "${vdir}/${version}.squashfs" \
-    -comp xz -b 262144 -noappend -no-progress
+    -comp xz -b 262144 -noappend -no-progress -processors "${JOBS}"
 
   # 给 imgiso 阶段留一份"注入本板资产后的 squashfs"（换进 base ISO 的 live/ →
   # 每板 ISO，供 `add system image` 原地升级、保配置、可回滚）。同一份 squashfs 复用，
@@ -230,8 +230,10 @@ stage_image() {
   run sudo rm -rf "${ROOTFS_DIR}"
 
   # --- 压缩归档 -----------------------------------------------------------------
-  local out="${OUT_DIR}/$(basename "${img}").zst"
-  run zstd -T0 "-${ZSTD_LEVEL}" --force -o "${out}" "${img}"
+  local out
+  out="${OUT_DIR}/$(basename "${img}").zst"
+  run zstd -T"${JOBS}" "-${ZSTD_LEVEL}" --force -o "${out}" "${img}"
+  (cd "${OUT_DIR}" && sha256sum "${out##*/}" > "${out##*/}.sha256")
   [[ "${KEEP_RAW_IMAGE}" == "1" ]] || run rm -f "${img}"
 
   section "完成：${out}"

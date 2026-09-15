@@ -16,13 +16,23 @@
 # 产物 deb 进 vyos-build/packages/ → build-vyos-image 当 packages.chroot 直装，
 # 压过仓库同名内核包。只搬 linux-image 本体（dbg/headers 绝不能进镜像）。
 
-# 内核输入指纹：补丁目录 + 全部 config 片段（overlay 投放后的 work 树为准）。
-# 板级补丁/片段一变指纹就变 → 自动重编，杜绝"旧 deb 不含新板 DTS"这类脚枪。
+# 源 commit、实际构建环境及 overlay 后的 recipe/config/certificates 共同决定缓存。
 kernel_inputs_digest() {
   local lkdir="${VYOS_BUILD_TREE}/scripts/package-build/linux-kernel"
-  { cat "${lkdir}/config/arm64/vyos_defconfig" \
-        "${lkdir}/config/"*.config \
-        "${lkdir}/patches/kernel/"* 2>/dev/null; } | sha256sum | cut -d' ' -f1
+  {
+    git -C "${VYOS_BUILD_TREE}" rev-parse HEAD || return
+    printf '%s\0' "$(resolved_kernel_version)" "${KERNEL_BUILD_MODE:-container}"
+    if [[ "${KERNEL_BUILD_MODE:-container}" == "container" ]]; then
+      builder_identity || return
+    else
+      printf '%s\0' "${BUILD_HOST_IMAGE_ID:-native}"
+      aarch64-linux-gnu-gcc --version || return
+      aarch64-linux-gnu-ld --version || return
+    fi
+    build_input_files "${LIB_DIR}/kernel.sh" "${lkdir}/config" "${lkdir}/patches" \
+      "${lkdir}/"*.sh "${lkdir}/"*.py "${lkdir}/"*.toml \
+      "${VYOS_BUILD_TREE}/data/defaults.toml" "${VYOS_BUILD_TREE}/data/certificates"
+  } | sha256sum | cut -d' ' -f1
 }
 
 kernel_stamp_file() { echo "${STATE_DIR}/kernel-inputs.sha256"; }
@@ -31,7 +41,9 @@ kernel_stamp_file() { echo "${STATE_DIR}/kernel-inputs.sha256"; }
 kernel_cache_fresh() {
   compgen -G "$(kernel_deb_glob)" >/dev/null || return 1
   [[ -f "$(kernel_stamp_file)" ]] || return 1
-  [[ "$(cat "$(kernel_stamp_file)")" == "$(kernel_inputs_digest)" ]]
+  local digest
+  digest="$(kernel_inputs_digest)" || return 1
+  [[ "$(cat "$(kernel_stamp_file)")" == "${digest}" ]]
 }
 
 stage_kernel() {
@@ -41,7 +53,7 @@ stage_kernel() {
 
   if [[ "${REBUILD_KERNEL:-0}" != "1" ]]; then
     if kernel_cache_fresh; then
-      log "内核 deb 已存在且输入未变，跳过（REBUILD_KERNEL=1 强制重编）：$(ls $(kernel_deb_glob))"
+      log "内核 deb 已存在且输入未变，跳过（REBUILD_KERNEL=1 强制重编）：$(kernel_deb_glob)"
       return 0
     elif compgen -G "$(kernel_deb_glob)" >/dev/null; then
       log "内核 deb 存在但补丁/配置片段已变化 → 自动重编"
@@ -49,6 +61,7 @@ stage_kernel() {
     fi
   fi
 
+  run rm -f "$(kernel_stamp_file)" || return
   case "${mode}" in
     container) kernel_build_container "${kv}" ;;
     cross)     kernel_build_cross "${kv}" ;;
@@ -63,8 +76,20 @@ stage_kernel() {
   fi
 }
 
+# 完整解开 data 压缩流，不能把本轮写了一半的 deb 当成 perf 尾部失败的成功包。
+kernel_validate_deb() {
+  local deb="$1" kv="$2"
+  dpkg-deb --info "${deb}" >/dev/null || return
+  dpkg-deb --fsys-tarfile "${deb}" >/dev/null || return
+  [[ "$(dpkg-deb -f "${deb}" Package)" == "linux-image-${kv}-vyos" \
+    && "$(dpkg-deb -f "${deb}" Version)" == "${kv}-1" \
+    && "$(dpkg-deb -f "${deb}" Architecture)" == arm64 ]]
+}
+
 # --- 模式一：官方流程进容器 ------------------------------------------------------
 kernel_build_container() {
+  local kv
+  printf -v kv '%q' "$1"
   if [[ "${REBUILD_KERNEL:-0}" == "1" ]]; then
     log "REBUILD_KERNEL=1：清理上次的内核源与 deb（容器内执行，规避 root 属主）"
     builder_exec 'rm -rf scripts/package-build/linux-kernel/linux-* \
@@ -72,15 +97,22 @@ kernel_build_container() {
                          packages/linux-*.deb'
   fi
 
+  # 每次实际构建先清理旧 deb，后续存在检查只能接受本轮产物。
+  builder_exec 'rm -f scripts/package-build/linux-kernel/linux-image-*.deb packages/linux-image-*.deb' || return
+
   # build.py 允许失败：官方 bindeb-pkg 带 BUILD_TOOLS=1，6.18 的 tools/perf 在
   # arm64 上有并行构建竞态，常在 linux-image deb 已产出后才炸掉 perf 包——
-  # 我们不需要 perf，以 deb 是否落盘为准。glob 的 `-vyos_` 天然排除 -vyos-dbg_。
-  builder_exec '
+  # 我们不需要 perf，以 image deb 的完整性与元数据验证为准。glob 的 `-vyos_` 天然排除 -vyos-dbg_。
+  builder_exec "
+    $(declare -f kernel_validate_deb)
     cd scripts/package-build/linux-kernel
-    ./build.py --packages linux-kernel || echo "W: build.py 非零退出（多半是 perf），以 deb 落盘为准"
+    ./build.py --packages linux-kernel || echo 'W: build.py 非零退出，必须单独验证本轮 image deb'
+    for deb in linux-image-*-vyos_*_arm64.deb; do
+      kernel_validate_deb \"\${deb}\" ${kv} || exit 1
+    done
     mkdir -p /vyos/packages
     mv -v linux-image-*-vyos_*_arm64.deb /vyos/packages/
-  '
+  "
 }
 
 # --- 模式二：宿主机交叉编译 ------------------------------------------------------
@@ -109,9 +141,8 @@ kernel_build_cross() {
   kernel_cross_assert_deps
   [[ "${DRY_RUN:-0}" == "1" ]] && { log "dry-run：交叉编 ${kv} → packages/"; return 0; }
 
-  if [[ "${REBUILD_KERNEL:-0}" == "1" ]]; then
-    run rm -f "${VYOS_BUILD_TREE}/packages/"linux-image-*.deb
-  fi
+  # bindeb-pkg 把 deb 写在源码父目录；仅清理 packages/ 无法排除同版本旧包。
+  run rm -f "${kdir}/"linux-image-*.deb "${VYOS_BUILD_TREE}/packages/"linux-image-*.deb || return
 
   # --- 取源：优先复用容器流程下载过的 tarball，否则 kernel.org 拉新并尽力验签 ----
   run mkdir -p "${kdir}"
@@ -140,9 +171,10 @@ kernel_build_cross() {
 
   # --- 补丁：与官方 build-kernel.sh 同目录同序（ls），含 overlay 投放的板级补丁 --
   local p
-  for p in $(ls "${lkdir}/patches/kernel"); do
-    log "应用补丁：${p}"
-    patch -d "${src}" -p1 -s -f < "${lkdir}/patches/kernel/${p}" \
+  for p in "${lkdir}/patches/kernel/"*; do
+    [[ -f "${p}" ]] || continue
+    log "应用补丁：$(basename "${p}")"
+    patch -d "${src}" -p1 -s -f < "${p}" \
       || fatal "补丁失败：${p}"
   done
 
@@ -175,7 +207,7 @@ kernel_build_cross() {
   # 顶层只暴露 %pkg 通配，没有单独的 `debian`/`binary-image` target，故走标准
   # bindeb-pkg。它按 binary-arch 序串行打包：linux-image 在最前、perf 在最后；
   # arm64 交叉编 perf 缺目标 libelf 必炸，但那时 linux-image deb 已 dpkg-deb 打好。
-  # 所以容忍整体非零退出，以 linux-image deb 是否落盘为准（与容器模式 build.py 一致）。
+  # 所以容忍整体非零退出，以 linux-image deb 的完整性与元数据验证为准（与容器模式 build.py 一致）。
   # DPKG_FLAGS=-d 跳过 dpkg-checkbuilddeps（非 Debian 宿主机没有 dpkg 包数据库）。
   # 代价：会顺带编 dbg/headers（在 perf 之前），多耗时/空间但不影响 image deb。
   run touch "${src}/.scmversion"
@@ -183,10 +215,11 @@ kernel_build_cross() {
         LOCALVERSION=-vyos KDEB_PKGVERSION="${kv}-1" DPKG_FLAGS=-d ); then
     log "bindeb-pkg 全部成功。"
   else
-    warn "bindeb-pkg 非零退出（多半是 perf 包），以 linux-image deb 落盘为准。"
+    warn "bindeb-pkg 非零退出；继续验证本轮 linux-image deb 的完整性与元数据。"
   fi
   local imgdeb="${kdir}/linux-image-${kv}-vyos_${kv}-1_arm64.deb"
   [[ -f "${imgdeb}" ]] || fatal "linux-image deb 未生成（看上面交叉编译日志）"
+  kernel_validate_deb "${imgdeb}" "${kv}" || fatal "linux-image deb 损坏或元数据不匹配：${imgdeb}"
   run mkdir -p "${VYOS_BUILD_TREE}/packages"
   run cp -v "${imgdeb}" "${VYOS_BUILD_TREE}/packages/"
 }

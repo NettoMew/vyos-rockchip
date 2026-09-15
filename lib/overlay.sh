@@ -13,17 +13,63 @@
 #   scripts/package-build/linux-kernel/config/*.config        自动 merge
 #   scripts/package-build/linux-kernel/patches/kernel/*.patch 自动应用
 
+# 仅回收上次明确投放的路径，不清理 work 树中的构建产物或人工文件。
+overlay_reconcile() {
+  run python3 - "${VYOS_BUILD_TREE}" "${STATE_DIR}/overlay-files.json" \
+    "${OVERLAY_DIR}" "${BOARDS_DIR}"/*/overlay <<'PYOVERLAY'
+import json
+import os
+from pathlib import Path
+import subprocess
+import sys
+
+root = Path(sys.argv[1]).resolve()
+manifest = Path(sys.argv[2])
+current = set()
+for source in map(Path, sys.argv[3:]):
+    if not source.is_dir():
+        continue
+    for directory, dirs, files in os.walk(source):
+        files += [name for name in dirs if (Path(directory) / name).is_symlink()]
+        current.update(str((Path(directory) / name).relative_to(source)) for name in files)
+previous = set(json.loads(manifest.read_text())) if manifest.exists() else set()
+for name in previous | current:
+    path = Path(name)
+    if path.is_absolute() or not path.parts or ".." in path.parts or ".git" in path.parts:
+        raise SystemExit(f"unsafe overlay path: {name!r}")
+    parent = (root / path).parent.resolve()
+    if parent != root and root not in parent.parents:
+        raise SystemExit(f"overlay path escapes work tree: {name!r}")
+for name in sorted(previous - current):
+    path = root / name
+    tracked = subprocess.run(["git", "-C", str(root), "ls-files", "--error-unmatch", "--", name],
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0
+    if tracked:
+        subprocess.run(["git", "-C", str(root), "restore", "--source=HEAD", "--worktree", "--", name], check=True)
+    elif path.is_symlink() or path.is_file():
+        path.unlink()
+    elif path.exists():
+        raise SystemExit(f"overlay file became a directory: {name!r}")
+# 复制前记录本轮所有路径：即便 rsync 中途失败，下次仍能回收部分投放。
+manifest.parent.mkdir(parents=True, exist_ok=True)
+temporary = manifest.with_suffix(".tmp")
+temporary.write_text(json.dumps(sorted(current)) + "\n")
+temporary.replace(manifest)
+PYOVERLAY
+}
+
 stage_overlay() {
   section "投放 overlay 到 work/vyos-build"
   [[ -d "${VYOS_BUILD_TREE}" ]] || fatal "work 树缺失，先跑 sources 阶段"
 
-  run rsync -a "${OVERLAY_DIR}/" "${VYOS_BUILD_TREE}/"
+  overlay_reconcile || return
+  run rsync -a --no-owner --no-group "${OVERLAY_DIR}/" "${VYOS_BUILD_TREE}/"
 
   local b
   for b in "${BOARDS_DIR}"/*/overlay; do
     [[ -d "${b}" ]] || continue
     log "板级 overlay：$(basename "$(dirname "${b}")")"
-    run rsync -a "${b}/" "${VYOS_BUILD_TREE}/"
+    run rsync -a --no-owner --no-group "${b}/" "${VYOS_BUILD_TREE}/"
   done
 
   # C2：base ISO 必须板无关。清掉历史（pre-C2）可能遗留在 work 树里的板级注入——

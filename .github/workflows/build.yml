@@ -77,9 +77,9 @@ jobs:
             git curl rsync zstd xz-utils tar ca-certificates \
             parted dosfstools e2fsprogs squashfs-tools kmod util-linux \
             build-essential bc bison flex libssl-dev libelf-dev swig \
-            gcc-aarch64-linux-gnu libgnutls28-dev \
-            python3 python3-pyelftools xorriso \
-            debhelper dpkg-dev fakeroot
+            gcc-aarch64-linux-gnu libc6-dev-arm64-cross libgnutls28-dev \
+            python3 python3-dev python3-setuptools python3-pycryptodome python3-pyelftools xorriso \
+            debhelper dpkg-dev fakeroot shellcheck
           # 交叉工具链兜底：若该平台未提供 aarch64-linux-gnu-* 前缀，软链到原生工具
           if ! command -v aarch64-linux-gnu-gcc >/dev/null; then
             for t in gcc ld objcopy objdump nm ar strip; do
@@ -87,12 +87,18 @@ jobs:
             done
           fi
 
+      - name: Build regression tests
+        run: |
+          for test in tests/*.sh; do bash "$test"; done
+          for script in lib/*.sh scripts/*.sh tests/*.sh; do bash -n "$script"; done
+          shellcheck -S warning -x lib/{sources,kernel,iso,uboot,builder,r8125,aic8800,deps,overlay,image,imgiso}.sh scripts/docker-build.sh tests/*.sh
+
       # ── 缓存①：源码克隆（按 build.conf 的 ref；rkbin 大，主要省下载/clone）─────
       - name: Cache sources (work/src)
         uses: actions/cache@v4
         with:
           path: work/src
-          key: src-${{ runner.arch }}-${{ hashFiles('build.conf') }}
+          key: src-${{ runner.arch }}-${{ hashFiles('build.conf', 'lib/sources.sh', 'lib/r8125.sh', 'lib/aic8800.sh') }}
           restore-keys: |
             src-${{ runner.arch }}-
 
@@ -105,7 +111,7 @@ jobs:
           path: |
             work/kernel
             work/state/kernel-inputs.sha256
-          key: kernel-${{ runner.arch }}-${{ hashFiles('overlay/scripts/package-build/linux-kernel/config/**', 'overlay/scripts/package-build/linux-kernel/patches/kernel/**', 'boards/*/overlay/scripts/package-build/linux-kernel/patches/kernel/**') }}
+          key: kernel-${{ runner.arch }}-${{ hashFiles('build.conf', 'lib/kernel.sh', 'lib/builder.sh', 'overlay/scripts/package-build/linux-kernel/config/**', 'overlay/scripts/package-build/linux-kernel/patches/kernel/**', 'boards/*/overlay/scripts/package-build/linux-kernel/patches/kernel/**') }}
 
       # 阶段拆两段，中间把缓存里的内核 deb 摆回 packages/ 让 kernel 阶段能据指纹跳过。
       # （work/vyos-build 由 sources 阶段 git clone，故 deb 不能预先放进它的 packages/，
@@ -119,7 +125,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cache/vyos-builder
-          key: builder-${{ runner.arch }}-v1   # vyos-build Dockerfile 变了就 bump v1→v2 刷新
+          key: builder-${{ runner.arch }}-${{ hashFiles('build.conf', 'lib/builder.sh') }}
 
       - name: Load cached builder image
         if: steps.builder-cache.outputs.cache-hit == 'true'
@@ -157,6 +163,8 @@ jobs:
           path: |
             out/*.img.zst
             out/*.iso
+            out/*.sha256
+            out/*.json
           if-no-files-found: error
           retention-days: 14
 

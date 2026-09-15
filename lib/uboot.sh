@@ -17,14 +17,34 @@ rkbin_pick() {
   ls -v ${RKBIN_SRC}/${glob} 2>/dev/null | tail -1
 }
 
+# 源版本、板级覆盖、开核开关及实际 blob 内容共同决定固件缓存。
+uboot_inputs_digest() {
+  local bl31 tpl
+  bl31="$(rkbin_pick "${RKBIN_BL31:-}" "${RKBIN_BL31_GLOB}")" || return
+  tpl="$(rkbin_pick "${RKBIN_TPL:-}" "${RKBIN_TPL_GLOB}")" || return
+  {
+    git -C "${UBOOT_SRC}" rev-parse HEAD || return
+    git -C "${RKBIN_SRC}" rev-parse HEAD || return
+    printf '%s\0' "${BUILD_HOST_IMAGE_ID:-native}"
+    aarch64-linux-gnu-gcc --version || return
+    aarch64-linux-gnu-ld --version || return
+    printf '%s\0' "${BOARD}" "${BOARD_UBOOT_DEFCONFIG}" "${BOARD_UNLOCK_CORES:-0}" "${bl31}" "${tpl}"
+    sha256sum "${bl31}" "${tpl}" || return
+    build_input_files "${LIB_DIR}/uboot.sh" "${BOARDS_DIR}/${BOARD}/uboot"
+  } | sha256sum | cut -d' ' -f1
+}
+
 stage_uboot() {
   section "U-Boot（${BOARD}：${BOARD_UBOOT_DEFCONFIG}）"
 
   local artifact="${UBOOT_OUT_DIR}/u-boot-rockchip.bin"
-  if [[ "${REBUILD_UBOOT:-0}" != "1" && -f "${artifact}" ]]; then
-    log "U-Boot 产物已存在，跳过（REBUILD_UBOOT=1 强制重编）：${artifact}"
+  local stamp="${UBOOT_OUT_DIR}/inputs.sha256" digest
+  digest="$(uboot_inputs_digest)" || return
+  if [[ "${REBUILD_UBOOT:-0}" != "1" && -s "${artifact}" && -f "${stamp}" && "$(cat "${stamp}")" == "${digest}" ]]; then
+    log "U-Boot 输入未变，跳过（REBUILD_UBOOT=1 强制重编）：${artifact}"
     return 0
   fi
+  run rm -f "${stamp}" "${UBOOT_SRC}/u-boot-rockchip.bin" || return
 
   local bl31 tpl
   bl31="$(rkbin_pick "${RKBIN_BL31:-}" "${RKBIN_BL31_GLOB}")"
@@ -38,11 +58,11 @@ stage_uboot() {
   # 源码树复位 + 当前板的源注入（保证板间互不渗漏）。boots/<b>/uboot/ 是镜像 U-Boot 源
   # 树结构的“文件覆盖”（m28k 的 DTS/defconfig 走这里），但其下 patches/ 子目录是“补丁库”
   # 非源覆盖 —— rsync 排除它，避免把补丁文件复制进 U-Boot 树（补丁由下方 git apply 应用）。
-  run git -C "${UBOOT_SRC}" checkout -- .
-  run git -C "${UBOOT_SRC}" clean -fdq
+  run git -C "${UBOOT_SRC}" checkout -- . || return
+  run git -C "${UBOOT_SRC}" clean -fdq || return
   if [[ -d "${BOARDS_DIR}/${BOARD}/uboot" ]]; then
     log "注入板级 U-Boot 源：boards/${BOARD}/uboot/（排除 patches/）"
-    run rsync -a --exclude='patches/' "${BOARDS_DIR}/${BOARD}/uboot/" "${UBOOT_SRC}/"
+    run rsync -a --no-owner --no-group --exclude='patches/' "${BOARDS_DIR}/${BOARD}/uboot/" "${UBOOT_SRC}/" || return
   fi
 
   # RK3582 开核（feature-flag 门控，与 lib/r8125.sh 的 BOARD_R8125 同构）：默认开。
@@ -53,19 +73,21 @@ stage_uboot() {
   if [[ "${BOARD_UNLOCK_CORES:-0}" == "1" ]]; then
     local pdir="${BOARDS_DIR}/${BOARD}/uboot/patches" p
     [[ -d "${pdir}" ]] || fatal "BOARD_UNLOCK_CORES=1 但缺补丁目录：${pdir}"
-    for p in $(ls -v "${pdir}"/*.patch 2>/dev/null); do
+    for p in "${pdir}/"*.patch; do
+      [[ -f "${p}" ]] || continue
       log "开核：git apply $(basename "${p}")"
-      run git -C "${UBOOT_SRC}" apply "${p}"
+      run git -C "${UBOOT_SRC}" apply "${p}" || return
     done
   fi
 
-  run make -C "${UBOOT_SRC}" mrproper
-  run make -C "${UBOOT_SRC}" "${BOARD_UBOOT_DEFCONFIG}"
+  run make -C "${UBOOT_SRC}" mrproper || return
+  run make -C "${UBOOT_SRC}" "${BOARD_UBOOT_DEFCONFIG}" || return
   run make -C "${UBOOT_SRC}" -j"${JOBS}" CROSS_COMPILE=aarch64-linux-gnu- \
-    BL31="${bl31}" ROCKCHIP_TPL="${tpl}"
+    BL31="${bl31}" ROCKCHIP_TPL="${tpl}" || return
 
   [[ -f "${UBOOT_SRC}/u-boot-rockchip.bin" ]] || [[ "${DRY_RUN:-0}" == "1" ]] \
     || fatal "U-Boot 构建结束但缺 u-boot-rockchip.bin"
-  run install -Dm644 "${UBOOT_SRC}/u-boot-rockchip.bin" "${artifact}"
+  run install -Dm644 "${UBOOT_SRC}/u-boot-rockchip.bin" "${artifact}" || return
+  [[ "${DRY_RUN:-0}" == "1" ]] || printf '%s\n' "${digest}" > "${stamp}"
   log "U-Boot 产物：${artifact}"
 }

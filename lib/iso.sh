@@ -5,14 +5,20 @@
 #
 # 产物归档到 work/iso/ 并记录于 state（work 树内的 build/ 会被下次 make clean 清掉）。
 
-# base ISO（板无关）的内容指纹：只看会进 base 的 overlay（flavor toml、live-build
-# hooks、includes）+ 板级 overlay（kernel 补丁/DTS、可能的共享 includes）。
-# C2 起板级驱动资产（aic8800/r8125/oled）不再进 base ISO，改 image 阶段 host 侧注入，
-# 故不纳入此指纹（它们的变化由 image 阶段每次重新注入接住）。
+# ISO 输入包含源码、recipe、显式版本/署名、实际 builder、内核包及 base overlay。
+# 版本留空表示复用已有自动版本；只有真正重建时才生成新时间戳。
 iso_overlay_digest() {
-  { find "${OVERLAY_DIR}" "${BOARDS_DIR}"/*/overlay -type f -print0 2>/dev/null \
-      | sort -z | xargs -0 sha256sum 2>/dev/null; } | sha256sum | cut -d' ' -f1
+  {
+    git -C "${VYOS_BUILD_TREE}" rev-parse HEAD || return
+    builder_identity || return
+    printf '%s\0' "${VYOS_VERSION:-auto}" "${BUILD_BY}" "${FLAVOR}" "${BUILDER_IMAGE}"
+    build_input_files "${LIB_DIR}/iso.sh" "${VYOS_BUILD_TREE}/build-vyos-image" \
+      "${VYOS_BUILD_TREE}/data/defaults.toml" "${OVERLAY_DIR}" "${BOARDS_DIR}/"*/overlay || return
+    local deb
+    while IFS= read -r deb; do sha256sum "${deb}" || return; done < <(compgen -G "$(kernel_deb_glob)" || true)
+  } | sha256sum | cut -d' ' -f1
 }
+
 iso_overlay_stamp() { echo "${STATE_DIR}/iso-overlay.sha256"; }
 
 # ISO 缓存有效 = 存在 AND 不比内核 deb 旧 AND overlay 定制指纹未变。
@@ -20,11 +26,14 @@ iso_cache_fresh() {
   local existing deb
   existing="$(current_iso)"
   [[ -n "${existing}" ]] || return 1
+  compgen -G "$(kernel_deb_glob)" >/dev/null || return 1
   for deb in $(kernel_deb_glob); do
     [[ -f "${deb}" && "${deb}" -nt "${existing}" ]] && return 1
   done
   [[ -f "$(iso_overlay_stamp)" ]] || return 1
-  [[ "$(cat "$(iso_overlay_stamp)")" == "$(iso_overlay_digest)" ]]
+  local digest
+  digest="$(iso_overlay_digest)" || return 1
+  [[ "$(cat "$(iso_overlay_stamp)")" == "${digest}" ]]
 }
 
 stage_iso() {
@@ -35,7 +44,7 @@ stage_iso() {
       log "ISO 已存在且内核未变，跳过（REBUILD_ISO=1 强制重建）：$(current_iso)"
       return 0
     elif [[ -n "$(current_iso)" ]]; then
-      log "ISO 存在但内核 deb 更新过 → 自动重建"
+      log "ISO 输入已变化 → 自动重建"
     fi
   fi
 
@@ -49,10 +58,15 @@ stage_iso() {
   # --build-type release：默认的 development 会塞 gdb/strace/vim + vyos-1x-smoketest，
   # 后者 postinst 会拉测试容器（docker blob），网络抖动即 EOF→postinst 退 1→lb build 失败；
   # 且 smoketest 对路由成品镜像无用。release 只多一段 EULA includes，干净、更瘦。
+  local build_command pattern
+  printf -v build_command './build-vyos-image --version %q --build-by %q --build-type release %q' "${version}" "${BUILD_BY}" "${FLAVOR}"
+  printf -v pattern '%q' "${FLAVOR}"
+  run rm -f "$(iso_overlay_stamp)" || return
   builder_exec "
     make clean >/dev/null 2>&1 || true
-    ./build-vyos-image --version '${version}' --build-by '${BUILD_BY}' --build-type release ${FLAVOR}
-  "
+    rm -f build/vyos-*-${pattern}-arm64.iso
+    ${build_command}
+  " || return
 
   local iso
   iso="$(ls -t "${VYOS_BUILD_TREE}/build/"vyos-*-"${FLAVOR}"-arm64.iso 2>/dev/null | head -1)"
