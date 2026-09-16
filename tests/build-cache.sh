@@ -41,6 +41,9 @@ fixture() {
   mkdir -p "${LK}/config/arm64" "${LK}/patches/kernel" "${VYOS_BUILD_TREE}/data/certificates" "${VYOS_BUILD_TREE}/packages"
   echo config > "${LK}/config/arm64/vyos_defconfig"
   echo fragment > "${LK}/config/board.config"
+  echo CONFIG_BPF=y > "${LK}/config/73-dae.config"
+  # Feature/package correspondence has its own kernel-features.sh suite.
+  kernel_validate_build() { :; }
   echo patch > "${LK}/patches/kernel/board.patch"
   echo recipe > "${LK}/build-kernel.sh"
   echo 'kernel_version = "6.18.1"' > "${VYOS_BUILD_TREE}/data/defaults.toml"
@@ -125,7 +128,7 @@ kernel_cross_fixture() {
   local source="${TMP}/archive/linux-6.18.1"
   mkdir -p "${source}/certs" "${source}/scripts/kconfig" "${WORK_DIR}/kernel"
   echo 'CN = test' > "${source}/certs/default_x509.genkey"
-  printf '#!/bin/sh\ntouch .config\n' > "${source}/scripts/kconfig/merge_config.sh"
+  printf '#!/bin/sh\necho CONFIG_BPF=y > .config\n' > "${source}/scripts/kconfig/merge_config.sh"
   chmod +x "${source}/scripts/kconfig/merge_config.sh"
   tar -cf "${LK}/linux-6.18.1.tar.xz" -C "${TMP}/archive" linux-6.18.1
   rm "${LK}/patches/kernel/board.patch"

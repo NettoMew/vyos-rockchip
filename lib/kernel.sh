@@ -76,6 +76,61 @@ stage_kernel() {
   fi
 }
 
+# Validate the same declarative fragment that is merged into the kernel config.
+kernel_validate_config() {
+  local config="$1" requirements="$2" line key value count=0 failed=0
+  [[ -s "${config}" && -s "${requirements}" ]] || { echo 'missing kernel config or feature contract' >&2; return 1; }
+  while IFS= read -r line || [[ -n "${line}" ]]; do
+    if [[ "${line}" =~ ^(CONFIG_[A-Z0-9_]+)=([ym])$ ]]; then
+      key="${BASH_REMATCH[1]}"; value="${BASH_REMATCH[2]}"
+      count=$((count + 1))
+      [[ "${value}" != m ]] || value='[ym]'
+      if ! grep -Eq "^${key}=${value}$" "${config}"; then
+        echo "kernel feature missing: ${line}" >&2
+        failed=1
+      fi
+    elif [[ "${line}" =~ ^#[[:space:]](CONFIG_[A-Z0-9_]+)[[:space:]]is[[:space:]]not[[:space:]]set$ ]]; then
+      key="${BASH_REMATCH[1]}"
+      count=$((count + 1))
+      if grep -Eq "^${key}=[ym]$" "${config}"; then
+        echo "kernel feature must be disabled: ${key}" >&2
+        failed=1
+      fi
+    fi
+  done < "${requirements}"
+  [[ "${count}" -gt 0 && "${failed}" == 0 ]]
+}
+
+kernel_validate_btf() {
+  local sections
+  sections="$(readelf -SW "$1")" || return
+  awk '
+    { for (i = 1; i <= NF; i++)
+        if ($i == ".BTF" && $(i+1) == "PROGBITS") {
+          size = $(i+4); gsub(/0/, "", size)
+          if (size != "") found = 1
+        }
+    }
+    END { exit !found }
+  ' <<< "${sections}" || { echo "kernel has no nonempty .BTF section: $1" >&2; return 1; }
+}
+
+# Check both build outputs and what will actually be shipped, before accepting
+# a package from the intentionally tolerated perf failure path.
+kernel_validate_build() (
+  set -o pipefail
+  local src="$1" deb="$2" kv="$3" requirements="$4" tmp
+  kernel_validate_config "${src}/.config" "${requirements}" || return
+  kernel_validate_btf "${src}/vmlinux" || return
+  tmp="$(mktemp -d)" || return
+  trap 'rm -rf "${tmp}"' EXIT
+  dpkg-deb --fsys-tarfile "${deb}" | tar -xf - -C "${tmp}" \
+    "./boot/config-${kv}-vyos" "./boot/vmlinuz-${kv}-vyos" || return
+  kernel_validate_config "${tmp}/boot/config-${kv}-vyos" "${requirements}" || return
+  cmp "${src}/.config" "${tmp}/boot/config-${kv}-vyos" || return
+  cmp "${src}/arch/arm64/boot/Image" "${tmp}/boot/vmlinuz-${kv}-vyos"
+)
+
 # 完整解开 data 压缩流，不能把本轮写了一半的 deb 当成 perf 尾部失败的成功包。
 kernel_validate_deb() {
   local deb="$1" kv="$2"
@@ -104,11 +159,12 @@ kernel_build_container() {
   # arm64 上有并行构建竞态，常在 linux-image deb 已产出后才炸掉 perf 包——
   # 我们不需要 perf，以 image deb 的完整性与元数据验证为准。glob 的 `-vyos_` 天然排除 -vyos-dbg_。
   builder_exec "
-    $(declare -f kernel_validate_deb)
+    $(declare -f kernel_validate_deb kernel_validate_config kernel_validate_btf kernel_validate_build)
     cd scripts/package-build/linux-kernel
     ./build.py --packages linux-kernel || echo 'W: build.py 非零退出，必须单独验证本轮 image deb'
     for deb in linux-image-*-vyos_*_arm64.deb; do
       kernel_validate_deb \"\${deb}\" ${kv} || exit 1
+      kernel_validate_build linux-${kv} \"\${deb}\" ${kv} config/73-dae.config || exit 1
     done
     mkdir -p /vyos/packages
     mv -v linux-image-*-vyos_*_arm64.deb /vyos/packages/
@@ -124,7 +180,7 @@ kernel_cross_assert_deps() {
   local -a missing=() c
   for c in aarch64-linux-gnu-gcc dpkg-buildpackage dpkg-deb fakeroot \
            dh_listpackages dh_gencontrol dh_builddeb \
-           bc flex bison perl openssl rsync tar xz curl; do
+           bc flex bison perl openssl rsync tar xz curl pahole readelf; do
     command -v "${c}" >/dev/null 2>&1 || missing+=("${c}")
   done
   ((${#missing[@]} == 0)) || fatal "交叉编内核缺宿主机依赖：${missing[*]}
@@ -202,6 +258,8 @@ kernel_build_cross() {
     scripts/kconfig/merge_config.sh "${frags[@]}" ) \
     || fatal "merge_config 失败"
   [[ -f "${src}/.config" ]] || fatal "merge_config 没有产出 .config"
+  kernel_validate_config "${src}/.config" "${lkdir}/config/73-dae.config" \
+    || fatal "内核配置不满足 DAE 能力契约（检查 pahole 和 Kconfig 依赖）"
 
   # --- 构建 deb（bindeb-pkg，容忍 perf 失败）-------------------------------------
   # 顶层只暴露 %pkg 通配，没有单独的 `debian`/`binary-image` target，故走标准
@@ -220,6 +278,8 @@ kernel_build_cross() {
   local imgdeb="${kdir}/linux-image-${kv}-vyos_${kv}-1_arm64.deb"
   [[ -f "${imgdeb}" ]] || fatal "linux-image deb 未生成（看上面交叉编译日志）"
   kernel_validate_deb "${imgdeb}" "${kv}" || fatal "linux-image deb 损坏或元数据不匹配：${imgdeb}"
+  kernel_validate_build "${src}" "${imgdeb}" "${kv}" "${lkdir}/config/73-dae.config" \
+    || fatal "内核 BTF 或包内 DAE 能力验收失败"
   run mkdir -p "${VYOS_BUILD_TREE}/packages"
   run cp -v "${imgdeb}" "${VYOS_BUILD_TREE}/packages/"
 }
