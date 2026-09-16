@@ -128,7 +128,12 @@ kernel_validate_build() (
     "./boot/config-${kv}-vyos" "./boot/vmlinuz-${kv}-vyos" || return
   kernel_validate_config "${tmp}/boot/config-${kv}-vyos" "${requirements}" || return
   cmp "${src}/.config" "${tmp}/boot/config-${kv}-vyos" || return
-  cmp "${src}/arch/arm64/boot/Image" "${tmp}/boot/vmlinuz-${kv}-vyos"
+  # ARM64 bindeb-pkg normally ships Image.gz; compare the actual boot payload.
+  if gzip -t "${tmp}/boot/vmlinuz-${kv}-vyos" 2>/dev/null; then
+    gzip -dc "${tmp}/boot/vmlinuz-${kv}-vyos" | cmp "${src}/arch/arm64/boot/Image" -
+  else
+    cmp "${src}/arch/arm64/boot/Image" "${tmp}/boot/vmlinuz-${kv}-vyos"
+  fi
 )
 
 # 完整解开 data 压缩流，不能把本轮写了一半的 deb 当成 perf 尾部失败的成功包。

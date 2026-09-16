@@ -137,6 +137,15 @@ reset_package
 pack_fixture
 check_package
 
+# ARM64 packages normally contain Image.gz rather than an uncompressed Image.
+gzip -c "${TMP}/src/arch/arm64/boot/Image" > "${TMP}/package/boot/vmlinuz-test-vyos"
+pack_fixture
+check_package
+printf 'different image\n' | gzip > "${TMP}/package/boot/vmlinuz-test-vyos"
+pack_fixture
+expect_failure check_package
+reset_package
+
 # Tree BTF cannot compensate for missing features in the shipped config.
 printf 'CONFIG_NET_CLS_BPF=m\n' > "${TMP}/package/boot/config-test-vyos"
 pack_fixture
