@@ -22,9 +22,11 @@ stage_deps() {
 
   # arm64 容器与 squashfs chroot 都依赖 qemu binfmt，且必须带 F（fix-binary）标志，
   # 否则只读 squashfs 里找不到解释器。
-  local binfmt=/proc/sys/fs/binfmt_misc/qemu-aarch64
-  [[ -f "${binfmt}" ]] || fatal "qemu-aarch64 binfmt 未注册（装 qemu-user-static-binfmt 并重启 systemd-binfmt）"
-  grep -q '^flags:.*F' "${binfmt}" || fatal "qemu-aarch64 binfmt 缺少 F 标志，chroot 进 squashfs 会失败"
+  if [[ "$(uname -m)" != "aarch64" ]]; then
+    local binfmt=/proc/sys/fs/binfmt_misc/qemu-aarch64
+    [[ -f "${binfmt}" ]] || fatal "qemu-aarch64 binfmt 未注册（需为 arm64 注册解释器）"
+    grep -q '^flags:.*F' "${binfmt}" || fatal "qemu-aarch64 binfmt 缺少 F 标志，chroot 进 squashfs 会失败"
+  fi
 
   docker info >/dev/null 2>&1 || fatal "docker daemon 不可用（或当前用户无权限）"
   log "宿主机依赖齐全。"

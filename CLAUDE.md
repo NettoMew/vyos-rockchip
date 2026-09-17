@@ -292,25 +292,22 @@ key、可回滚，无需重刷。
 - 改 hook 94 会让 base ISO 进 `iso_overlay_digest` → 下次 `make` 自动重建 base ISO（必须，运行
   系统的模板要认 vmlinuz-dtb）。`make <board>` 同时产 `out/*.img.zst`（全盘刷）+ `out/*.iso`（add 升级）。
 
-## 网络性能调优 net-tune（2026-06-14 真机验证）
-内核态网络吞吐调优三件套（不依赖 VPP、零额外内存）。**A=flowtable
-留给用户自配**（`set firewall flowtable` + forward filter offload，纯 VyOS CLI）；**B 已落地**：
+## 网络性能调优 net-tune
+flowtable 与 Ethernet offload/RPS/RFS 留给用户通过 VyOS CLI 配置。
 `rockchip-net-tune.service`（共享，四板默认 enabled），开机 oneshot 跑
 `includes.chroot/usr/local/sbin/rockchip-net-tune.sh`：
-- **硬件多队列(RSS) + NIC offload（2026-06-15 加）**：逐口先 `ethtool -L` 把 RX/TX 通道开到
-  硬件上限（RTL8125 编了 `ENABLE_RSS_SUPPORT` 后 RX4/TX2；combined 式与分离 RX/TX 式都兼容、
-  单队列口自动跳过），**必须在 IRQ/RPS 分核之前**——`ethtool -L` 会重建 IRQ 与 rx/tx 队列。
-  再逐项 `ethtool -K $if {gro,gso,tso,sg,rx-udp-gro-forwarding} on`（不支持/[fixed] 项 `|| true`
-  静默跳过）。出厂这些 offload 实测**全 off**（GRO 关 = 转发吞吐命脉浪费）。与 VyOS flowtable
-  软件流卸载是**不同层、叠加**关系（GRO 在驱动 NAPI→flowtable 在 ingress 钩子→GSO 出口分段，
-  顺序咬合，非互斥；只有 `offload hardware` 才需网卡支持、RTL8125 没有，用的是 software）。
-- **NIC IRQ 亲和**：按 `cpu_capacity` 排序（big.LITTLE 自动优先大核），**≥3 核排除 CPU0
-  留控制面**，每个网口的 IRQ 轮转钉到不同 CPU（RSS 真队列各自 MSI-X IRQ 分核），写
-  `smp_affinity_list`。避免 2.5G 全堆 CPU0、单个 A55 喂不满。**e52c 真机验证**：cpu_targets
-  =`4 5 6 7 1 2 3`，eth0/eth1 的 IRQ 从 A76(cpu4-7) 起轮转、CPU0 不参与；RK3568/3528(同构
-  A55) 退化为 eth0→cpu1/eth1→cpu2/eth2→cpu3。
-- **RPS/RFS/XPS**：rx/tx 队列摊到其余核（≥4 核排除 CPU0 留控制面）+ 全局 `rps_sock_flow_entries`。
-- **governor=performance**（用户选定）：所有核吃满频。
+- **UDP GRO forwarding**：保留 `rx-udp-gro-forwarding` 开关；不再覆盖 VyOS 管理的
+  GRO/GSO/TSO/SG、RX checksum、RPS/RFS。不调用 `ethtool -L`，避免重建队列间接
+  重置用户配置。驱动初始队列数保留；r8125 9.018.00 本就没有 `set_channels`。
+- **NIC IRQ 亲和候选**：只使用在线 CPU 中最高 `cpu_capacity` 的组，至少三个在线核
+  时先排除 CPU0。网口之间独立轮转并错开起点，所有 MSI-X 向量按 IRQ 编号数值排序，
+  不猜 RX/TX/控制角色。E52C 预期使用 CPU 4–7，而非旧策略把 LAN RX 分到 CPU 1–4。
+  尚未完成真机性能对照，不能称为已验证的最优分配；集中大核可能与代理加密竞争。
+- **XPS**：保留已有 TX 队列掩码（≥4 核排除 CPU0）。不设置 RX 队列或全局 RFS。
+- **governor=performance**：保留已有默认值；与 VyOS TuneD profile 存在管理交集，
+  未完成归属迁移前不要同时引入 profile。
+部署新脚本前需要显式迁移所需 offload/RPS/RFS 配置；未配置节点不再由启动脚本
+补开。迁移差异、验证边界见 [网络调优配置边界](docs/network-performance.md)。
 philosophy 同 rockchip-leds.sh：**按接口名/驱动认，板间零 if 分支，缺项静默跳过** → 四板一脚本。
 可选覆盖 `/etc/rockchip/net-tune.conf`（`GOVERNOR=` / `IFACE_CPU="eth0:2 ..."`，默认四板都不带）。
 enable 走 hook `95-rockchip-net-tune-enable.chroot`（chroot 建 wants symlink，同 97-leds）。

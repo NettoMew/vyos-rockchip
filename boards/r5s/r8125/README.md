@@ -1,7 +1,7 @@
 # boards/r5s/r8125/
 
-`stage_r8125`（`lib/r8125.sh`）按字典序 `git apply` 本目录下的 `*.patch` 到
-`openwrt/rtl8125@9.016.01` 源树（编译前），用于把官方 r8125 适配到 VyOS 的内核
+`stage_r8125`（`lib/r8125.sh`）按字典序 `patch -p1` 本目录下的 `*.patch` 到
+官方 `r8125-9.018.00/src/` 源树（编译前），用于把官方 r8125 适配到 VyOS 的内核
 版本（当前 6.18.34）。
 
 通常**无需补丁**：openwrt/rtl8125 的 9.016.01 已跟进较新内核。若 `make ... modules`

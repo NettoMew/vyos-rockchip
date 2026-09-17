@@ -77,6 +77,8 @@ stage_imgiso() {
     "${maps[@]}" \
     -commit
 
+  (cd "${OUT_DIR}" && sha256sum "${out##*/}" > "${out##*/}.sha256")
+
   section "完成：${out}"
   log "用法：scp 到设备 → configure 外 \`add system image ${out##*/}\`（保留当前配置/SSH key、可回滚）"
   log "首次须先运行一版带本机制的镜像（hook 94 认 vmlinuz-dtb），之后每次更新一条命令即可。"

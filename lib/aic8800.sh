@@ -15,7 +15,9 @@
 # 手动 insmod 会 -110（SDIO 已 idle），必须开机早期加载，故走 modules-load.d。
 
 AIC8800_REPO="${AIC8800_REPO:-https://github.com/radxa-pkg/aic8800.git}"
-AIC8800_COMMIT="${AIC8800_COMMIT:-89f865b80f5f2ba6c0711c560e1d0191e87a1bf0}"
+# 2026-09-02 Radxa 包装版本；src/ 与原 89f865b 完全相同，沿用板级 SDIO 补丁。
+# 此构建不执行 Debian quilt，不能把上游 debian/patches 的更新视为已应用。
+AIC8800_COMMIT="${AIC8800_COMMIT:-516e3b087763d80c44f5e3b6d2dd63e0d925c91d}"
 AIC8800_SRC="${WORK_DIR}/src/aic8800"
 AIC8800_DRV_SUBDIR="src/SDIO/driver_fw/driver/aic8800"
 AIC8800_FW_SUBDIR="src/SDIO/driver_fw/fw"
@@ -37,11 +39,8 @@ stage_aic8800() {
 
   # 1) 取源 + 补丁（0001 port + 0002 6.18 适配）
   run mkdir -p "${WORK_DIR}/src"
-  if [[ ! -d "${AIC8800_SRC}/.git" ]]; then
-    [[ "${SKIP_FETCH:-0}" == "1" ]] && fatal "SKIP_FETCH=1 但 aic8800 源缺失"
-    run git clone --filter=blob:none "${AIC8800_REPO}" "${AIC8800_SRC}"
-  fi
-  run git -C "${AIC8800_SRC}" checkout -q "${AIC8800_COMMIT}"
+  git_clone_shallow "${AIC8800_REPO}" "${AIC8800_COMMIT}" "${AIC8800_SRC}" \
+    || fatal "aic8800 源码获取失败"
   run git -C "${AIC8800_SRC}" checkout -- .
   local p
   for p in "${BOARDS_DIR}/${BOARD}/aic8800/"*.patch; do
