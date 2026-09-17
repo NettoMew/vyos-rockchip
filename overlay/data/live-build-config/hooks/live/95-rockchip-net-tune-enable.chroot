@@ -1,5 +1,5 @@
 #!/bin/sh
-# 95-rockchip-net-tune-enable.chroot — 启用网络调优服务（开机自调 IRQ 亲和/RPS/governor）。
+# 启用板级 IRQ/XPS、UDP GRO forwarding 与 governor 设置，不覆盖 VyOS RPS/RFS。
 # 用 hook 在 chroot 内建 wants symlink（而非 includes.chroot 放 symlink——那会让
 # build-vyos-image 的 copytree 跟随绝对路径符号链接失败）。同 97-rockchip-leds-enable。
 set -e

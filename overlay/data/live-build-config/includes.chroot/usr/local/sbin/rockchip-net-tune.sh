@@ -1,15 +1,9 @@
 #!/bin/sh
-# rockchip-net-tune.sh — 板无关网络性能调优（开机一次，oneshot）：硬件多队列 + NIC
-# offload + IRQ 亲和 + RPS/RFS/XPS + cpufreq performance，让 2.5G 不卡在单核 softirq。
-#   ⓪ 硬件多队列(RSS) + NIC offload：把网卡 RX/TX 通道开到硬件上限（RTL8125 编了
-#      ENABLE_RSS_SUPPORT 后有 RX4/TX2），并开 GRO/GSO/TSO/SG/UDP-GRO-forwarding。
-#      GRO 入向聚合、GSO 出向分段，与 VyOS flowtable 软件流卸载是不同层、叠加关系。
-#   ① NIC IRQ 亲和：每个网口的 IRQ 钉到独立 CPU（big.LITTLE 自动优先大核），多队列网卡
-#      各队列分到不同核（RSS 真队列分核）→ 避免所有网卡中断堆在 CPU0、单核喂不满 2.5G。
-#   ② RPS/RFS/XPS：把协议栈收/发处理摊到其余核（gmac 这种单队列口收益最大）。
-#   ③ CPU governor=performance：路由盒吃满频，降转发延迟、提峰值吞吐。
-# 与 rockchip-leds.sh 同 philosophy：按接口名/驱动认，板间零 if 分支；缺项静默跳过 →
-# e20c/m28k/r5s/e52c 四板同一脚本通用（核数/大小核/口数自适应）。
+# 板级启动设置：IRQ、XPS、UDP GRO forwarding 和 CPU governor。
+# Ethernet offload、RPS/RFS 由 VyOS 配置管理；不在启动后覆盖，也不通过调整
+# channel 数量重建队列。升级迁移要求见 docs/network-performance.md。
+# IRQ 使用在线高 capacity CPU，各接口独立轮转；XPS/governor 策略保持不变。
+# 性能收益须独立测试，不能由脚本执行成功推断。
 # 可选覆盖 /etc/rockchip/net-tune.conf（仅在自动判错时才放，默认四板都不带）：
 #   GOVERNOR="ondemand"                  # 改回省电
 #   IFACE_CPU="eth0:2 eth1:3 eth2:4"     # 显式把某口 IRQ 钉到指定 CPU（覆盖自动分核）
@@ -20,20 +14,24 @@ GOVERNOR="${GOVERNOR:-performance}"
 
 log() { echo "rockchip-net-tune: $*"; }
 
-# --- CPU 目标顺序：按 cpu_capacity 降序（大核在前）；>=3 核时排除 CPU0 留给控制面 -------
-# 无 cpu_capacity（同构 SoC，如 RK3528/3568 全 A55）则等价按编号。e52c(big.LITTLE) 上得
-# "4 5 6 7 1 2 3"（A76 在前、CPU0 不进 IRQ 轮转，与 RPS_MASK=fe 一致）。注意：排除/排序
-# 都在管道内完成（for…done|sort|awk），不靠管道外变量——管道里的 for 跑在子 shell，外面
-# 读不到它设的变量（旧版用管道外 echo "$zero" 拼 CPU0，子 shell 丢值，是歪打正着）。
+# 仅从在线 CPU 选最高 capacity 组；>=3 个在线核时先排除 CPU0。
+# E52C 得到 4/5/6/7；同构平台按编号轮转。缺少 capacity 时沿用 1024 回退。
 cpu_targets() {
-  ncpu=$(nproc 2>/dev/null || echo 1)
-  skip0=0; [ "$ncpu" -ge 3 ] && skip0=1
   for c in /sys/devices/system/cpu/cpu[0-9]*/; do
+    [ -d "$c" ] || continue
+    [ "$(cat "${c}online" 2>/dev/null || echo 1)" = 0 ] && continue
     id=$(basename "$c"); id=${id#cpu}
-    [ "$skip0" = 1 ] && [ "$id" = 0 ] && continue
     cap=$(cat "${c}cpu_capacity" 2>/dev/null || echo 1024)
     echo "$cap $id"
-  done | sort -k1,1nr -k2,2n | awk '{printf "%s ", $2}'
+  done | sort -k1,1nr -k2,2n | awk '
+    { cap[NR]=$1; cpu[NR]=$2 }
+    END {
+      for (i=1; i<=NR; i++) {
+        if (NR>=3 && cpu[i]==0) continue
+        if (!found) { best=cap[i]; found=1 }
+        if (cap[i]==best) printf "%s ", cpu[i]
+      }
+    }'
 }
 
 # 取列表第 i 个（0 基，循环）
@@ -49,7 +47,7 @@ iface_irqs() {
     for f in "$d/msi_irqs"/*; do [ -e "$f" ] && basename "$f"; done
   else
     awk -v n="$1" '$NF==n { sub(/:/,"",$1); print $1 }' /proc/interrupts
-  fi
+  fi | sort -n
 }
 
 # 受管物理网口（eth*/lan*/wan*）
@@ -84,48 +82,25 @@ sleep 1   # admin-up 后给 IRQ/队列分配结算一点时间
 TARGETS=$(cpu_targets)
 NCPU=$(nproc 2>/dev/null || echo 1)
 
-# RPS/XPS 掩码：>=4 核时排除 CPU0（留控制面），否则用全部核
+# XPS 掩码：>=4 核时排除 CPU0（留控制面），否则用全部核
 if [ "$NCPU" -ge 4 ]; then
-  rps_ids=""; for n in $(seq 1 $(( NCPU - 1 )) 2>/dev/null); do rps_ids="$rps_ids $n"; done
+  xps_ids=""; for n in $(seq 1 $(( NCPU - 1 )) 2>/dev/null); do xps_ids="$xps_ids $n"; done
 else
-  rps_ids=""; for n in $(seq 0 $(( NCPU - 1 )) 2>/dev/null); do rps_ids="$rps_ids $n"; done
+  xps_ids=""; for n in $(seq 0 $(( NCPU - 1 )) 2>/dev/null); do xps_ids="$xps_ids $n"; done
 fi
-RPS_MASK=$(mask_of $rps_ids)
+XPS_MASK=$(mask_of $xps_ids)
 
-# 全局 RFS（加速 RPS、降低乱序）
-[ -w /proc/sys/net/core/rps_sock_flow_entries ] && \
-  { echo 32768 > /proc/sys/net/core/rps_sock_flow_entries 2>/dev/null || true; }
-
-# --- 逐网口：硬件多队列(RSS) + NIC offload + IRQ 亲和 + RPS/RFS/XPS -------------------
-counter=0
+# --- 逐网口：UDP GRO forwarding + IRQ 亲和 + XPS ---------------------------------
+iface_index=0
 for ndir in /sys/class/net/*; do
   [ -e "$ndir/device" ] || continue          # 只动物理网卡
   ifc=$(basename "$ndir")
   case "$ifc" in eth*|lan*|wan*) ;; *) continue ;; esac
+  counter=$iface_index
+  iface_index=$(( iface_index + 1 ))
 
-  # ⓪ 硬件多队列(RSS)：把 RX/TX 通道开到硬件上限。必须在 IRQ/队列分核之前——`ethtool -L`
-  #    会重建 IRQ 与 rx/tx 队列，先开通道后面 ① IRQ 亲和、②③ RPS/XPS 才能落到新队列上。
-  #    单队列网卡(不支持/RX≤1)自动跳过；驱动用 combined 还是分离 RX/TX 都兼容。
-  chan=$(ethtool -l "$ifc" 2>/dev/null)
-  if [ -n "$chan" ]; then
-    mco=$(printf '%s\n' "$chan" | awk '/Pre-set/{p=1;next} /Current/{p=0} p&&/^Combined:/{print $2;exit}')
-    mrx=$(printf '%s\n' "$chan" | awk '/Pre-set/{p=1;next} /Current/{p=0} p&&/^RX:/{print $2;exit}')
-    mtx=$(printf '%s\n' "$chan" | awk '/Pre-set/{p=1;next} /Current/{p=0} p&&/^TX:/{print $2;exit}')
-    if [ "${mco:-0}" -gt 1 ] 2>/dev/null; then
-      ethtool -L "$ifc" combined "$mco" 2>/dev/null && log "$ifc RSS combined=$mco" || true
-    else
-      a=""
-      [ "${mrx:-0}" -gt 1 ] 2>/dev/null && a="rx $mrx"
-      [ "${mtx:-0}" -gt 1 ] 2>/dev/null && a="$a tx $mtx"
-      [ -n "$a" ] && { ethtool -L "$ifc" $a 2>/dev/null && log "$ifc RSS channels: $a" || true; }
-    fi
-  fi
-
-  # ⓪b NIC offload：GRO 入向聚合、GSO/TSO 出向分段、SG、UDP 转发 GRO。逐项设，不支持/[fixed]
-  #     的项 `|| true` 静默跳过（一项失败不连累其它）。与 flowtable 软件流卸载叠加，不冲突。
-  for feat in gro gso tso sg rx-udp-gro-forwarding; do
-    ethtool -K "$ifc" "$feat" on 2>/dev/null || true
-  done
+  # 当前 VyOS 无此独立配置节点，保留已有 UDP forwarding 行为；不强制开启 GRO。
+  ethtool -K "$ifc" rx-udp-gro-forwarding on 2>/dev/null || true
 
   # ① IRQ 亲和。优先用 net-tune.conf 的显式 IFACE_CPU 覆盖；否则自动轮转分核。
   forced=""
@@ -144,16 +119,10 @@ for ndir in /sys/class/net/*; do
       && log "IRQ $irq ($ifc) -> CPU $cpu" || true
   done
 
-  # ② RPS（收）+ RFS：把协议栈处理摊开
-  for q in "$ndir"/queues/rx-*; do
-    [ -d "$q" ] || continue
-    [ -w "$q/rps_cpus" ]     && { echo "$RPS_MASK" > "$q/rps_cpus" 2>/dev/null || true; }
-    [ -w "$q/rps_flow_cnt" ] && { echo 4096        > "$q/rps_flow_cnt" 2>/dev/null || true; }
-  done
-  # ③ XPS（发）
+  # XPS（发）：与 IRQ、接收方向的 RPS/RFS 独立。
   for q in "$ndir"/queues/tx-*; do
     [ -d "$q" ] || continue
-    [ -w "$q/xps_cpus" ] && { echo "$RPS_MASK" > "$q/xps_cpus" 2>/dev/null || true; }
+    [ -w "$q/xps_cpus" ] && { echo "$XPS_MASK" > "$q/xps_cpus" 2>/dev/null || true; }
   done
 done
 
@@ -161,6 +130,6 @@ done
 for g in /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor; do
   [ -w "$g" ] && { echo "$GOVERNOR" > "$g" 2>/dev/null || true; }
 done
-log "governor=$GOVERNOR, RPS_MASK=$RPS_MASK, cpu_targets=[$TARGETS]"
+log "governor=$GOVERNOR, XPS_MASK=$XPS_MASK, cpu_targets=[$TARGETS]"
 
 exit 0
